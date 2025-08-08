@@ -2,7 +2,7 @@ import {
   useEffect,
   useMemo,
 } from 'react'
-import { CANWorker, ADCWorker } from './worker/types'
+import { CARWorker } from './worker/types'
 import { DATA } from './../store/Store';
 import { APP } from './../store/Store';
 
@@ -24,32 +24,17 @@ function Cardata() {
   const data = DATA((state) => state)
   const updateData = DATA((state) => state.update);
 
-  const canWorker = useMemo(() => {
+  const carWorker = useMemo(() => {
     const worker = new Worker(
-      new URL('./worker/CAN.worker.ts', import.meta.url), {
+      new URL('./worker/CAR.worker.ts', import.meta.url), {
       type: 'module'
     }
-    ) as CANWorker
-    return worker
-  }, [])
-
-  const adcWorker = useMemo(() => {
-    const worker = new Worker(
-      new URL('./worker/ADC.worker.ts', import.meta.url), {
-      type: 'module'
-    }
-    ) as ADCWorker
+    ) as CARWorker
     return worker
   }, [])
 
   useEffect(() => {
-    canWorker.onmessage = (event) => {
-      const { type, message } = event.data;
-      const newData = { [type]: message };
-      updateData(newData.message)
-    };
-
-    adcWorker.onmessage = (event) => {
+    carWorker.onmessage = (event) => {
       const { type, message } = event.data;
       const newData = { [type]: message };
       updateData(newData.message)
@@ -57,8 +42,7 @@ function Cardata() {
 
     return () => {
       // Clean up the worker when the component is unmounted
-      adcWorker.terminate();
-      canWorker.terminate();
+      carWorker.terminate();
     };
   }, []);
 

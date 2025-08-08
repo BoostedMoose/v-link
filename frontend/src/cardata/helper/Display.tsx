@@ -2,8 +2,8 @@ import { useEffect } from 'react';
 import { Socket } from 'socket.io-client';
 
 interface DisplayProps {
-    autoOpen: boolean; // dynamic sensor data
-    io: Socket; // update interval in ms
+    autoOpen: boolean;
+    io: Socket;
 }
 
 const Display: React.FC<DisplayProps> = ({ autoOpen, io }) => {

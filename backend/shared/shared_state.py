@@ -3,22 +3,30 @@
 import queue
 import threading
 
+from threading import Lock
+
 class SharedState:
     def __init__(self):
         #Global Variables
-        self.verbose = False
+        self.car_data = {}
+        self.car_data_lock = Lock()
 
+        #Hardware
         self.rpiModel = 5
         self.sessionType = "wayland"
 
+        #Modules
         self.vCan = False
         self.vLin = False
         self.dev = False
         self.pimost = False
 
+        #Debug
+        self.verbose = False
         self.vite = True
         self.isKiosk = True
 
+        #Display Status
         self.rtiStatus = False
         self.hdmiStatus = False
 
@@ -39,8 +47,6 @@ class SharedState:
         self.hdmi_event = threading.Event() 
 
         self.ignStatus = threading.Event()
-
-
         self.shutdown_pi = threading.Event()
 
 
@@ -56,5 +62,10 @@ class SharedState:
             "vcan":     None,
             "pimost":   None,
         }
+
+    def update_car_data(self, key, value):
+        with self.car_data_lock:
+            self.car_data[key] = value
+
 
 shared_state = SharedState()

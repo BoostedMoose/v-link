@@ -33,6 +33,7 @@
     "pcm-ringbuf-player": "github:BoostedMoose/pcm-ringbuf-player",
     "process": "^0.11.10",
     "react": "^18.3.1",
+    "react-devtools": "^4.28.5",
     "react-dom": "^18.3.1",
     "react-indiana-drag-scroll": "^2.2.0",
     "react-loader-spinner": "^5.3.4",

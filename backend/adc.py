@@ -81,11 +81,15 @@ class ADCThread(threading.Thread):
             characteristics = sensor["characteristic"]
             interpolated_value = self.interpolate_value(voltage, resistance, characteristics)
             
-            
             converted_value = eval(sensor["scale"], {"value": interpolated_value})
 
-            data = (f"{sensor['app_id']}:{float(converted_value)}")
-            self.emit_data_to_frontend(data)
+            shared_state.update_car_data(key , float(converted_value))
+
+            #with shared_state.car_data_lock:
+            #    snapshot = shared_state.car_data.copy() 
+            #print(snapshot)
+
+            #self.emit_data_to_frontend(data)
 
     def interpolate_value(self, voltage, resistance, characteristics):
         interpolated_value = None
@@ -139,3 +143,4 @@ class ADCThread(threading.Thread):
     def emit_data_to_frontend(self, data):
         if self.client and self.client.connected:
             self.client.emit('data', data, namespace='/adc')
+            print(data)

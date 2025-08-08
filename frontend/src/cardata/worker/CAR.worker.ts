@@ -1,8 +1,10 @@
 import { io } from "socket.io-client";
 
 let settings;
-
 // Connect to the canbus namespace to receive continuous data stream
+const dataChannel = io("ws://localhost:4001/data");
+
+const adcChannel = io("ws://localhost:4001/adc");
 const canChannel = io("ws://localhost:4001/can");
 
 // Function to handle incoming canbus settings
@@ -10,26 +12,6 @@ const handlesensorSettings = (data) => {
     settings = data.sensors;
     canChannel.connect();
 };
-
-// Function to update car data
-const update = (data) => {
-    const updatedData = {};
-
-    if (settings && data != null) {
-        Object.keys(settings).forEach((key) => {
-            const message = settings[key];
-            const id = message.app_id + ':';
-            const regex = new RegExp(id, 'g');
-
-            if (regex.test(data)) {
-                const value = data.replace(regex, "");
-                updatedData[key] = Number(value).toFixed(2);
-            }
-        });
-    }
-    return updatedData;
-};
-
 // Function to post updated car data to the main thread
 const postCarDataToMain = (data) => {
     const message = {
@@ -42,16 +24,22 @@ const postCarDataToMain = (data) => {
 // Listen for canbus settings
 canChannel.on("settings", handlesensorSettings);
 
-// Listen for continuous data stream from canbus namespace
-canChannel.on("data", (data) => {
-    data = update(data);
+// Listen for adc settings
+adcChannel.on("settings", handlesensorSettings);
+
+// Listen for continuous data stream from data namespace
+dataChannel.on("data", (data) => {
     postCarDataToMain(data);
 });
 
-// Send a request for canbus settings
-canChannel.emit("load");
+// Send a request for data values
+setInterval(() => {
+    dataChannel.emit('request');
+}, 60);
 
-
+// Send a request for adc settings
+//adcChannel.emit("load");
+//canChannel.emit("load");
 
 onmessage = async (event: MessageEvent<Command>) => {
     switch (event.data.type) {

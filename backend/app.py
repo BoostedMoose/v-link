@@ -35,7 +35,7 @@ class APPThread(threading.Thread):
             "--enable-experimental-web-platform-features",
             "--enable-features=SharedArrayBuffer",
             "--autoplay-policy=no-user-gesture-required",
-            "--disable-extensions",
+            #"--disable-extensions",
             "--disable-logging",
             "--log-level=3"
         ]

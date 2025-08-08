@@ -4,6 +4,8 @@ import time
 import subprocess
 import eventlet
 
+#eventlet.monkey_patch()
+
 from flask                  import Flask, send_from_directory, render_template
 from flask_socketio         import SocketIO
 from flask_cors             import CORS
@@ -170,8 +172,13 @@ class ServerThread(threading.Thread):
     for module in modules:
         register_socketio(module)
 
+    # Handle UI update requests
+    @socketio.on('request', namespace='/data')
+    def handle_can_request():
+        socketio.emit('data', shared_state.car_data, namespace='/data')
 
-    # Handle IO tasks
+
+    # Handle system  tasks
     @socketio.on('systemTask', namespace='/sys')
     def handle_system_task(args):
         if   args == 'reboot':
