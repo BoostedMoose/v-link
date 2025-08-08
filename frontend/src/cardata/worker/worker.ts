@@ -35,7 +35,7 @@ dataChannel.on("data", (data) => {
 // Send a request for data values
 setInterval(() => {
     dataChannel.emit('request');
-}, 60);
+}, 100);
 
 // Send a request for adc settings
 //adcChannel.emit("load");

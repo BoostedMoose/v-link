@@ -19,13 +19,11 @@ class VCANThread(threading.Thread):
         self.logger = logger
         self.channel = self.detect_can_interface()
 
-        # Run setup script for vcan if needed
         if self.channel.startswith("vcan"):
             script_directory = os.path.dirname(os.path.abspath(__file__))
             setup_script_path = os.path.join(script_directory, 'setup.sh')
             subprocess.run([setup_script_path], shell=True)
 
-        # Simulation state (initial values)
         self.state = {
             "rpm": 1000,
             "boost": 1.0,
@@ -34,9 +32,12 @@ class VCANThread(threading.Thread):
             "lambda1": 0.9,
             "lambda2": 0.8,
             "voltage": 13.5,
+            "speed": 0.0,
         }
 
-        # Parameter maps (PID bytes -> state keys)
+        # NEW: store smooth targets for each parameter
+        self.targets = dict(self.state)
+
         self.param_map = {
             (0x10, 0x1D): "rpm",
             (0x12, 0x9D): "boost",
@@ -45,6 +46,7 @@ class VCANThread(threading.Thread):
             (0x10, 0x34): "lambda1",
             (0x10, 0x2C): "lambda2",
             (0x10, 0x0A): "voltage",
+            (0x10, 0xA5): "speed",
         }
 
     def detect_can_interface(self):
@@ -94,26 +96,24 @@ class VCANThread(threading.Thread):
             self.send_response(param, key)
 
     def update_state(self):
-        rpm = self.state["rpm"] + random.randint(-200, 300)
-        rpm = max(800, min(7500, rpm))
-        self.state["rpm"] = rpm
+        # Pick new targets less often (~every 100 loops on average)
+        if random.random() < 0.01:
+            self.targets["rpm"] = random.randint(800, 7500)
+            self.targets["boost"] = random.uniform(0.0, 2.0)
+            self.targets["coolant"] = random.uniform(70, 105)
+            self.targets["intake"] = random.uniform(15, 50)
+            self.targets["lambda1"] = random.uniform(0.85, 1.05)
+            self.targets["lambda2"] = random.uniform(0.75, 0.95)
+            self.targets["voltage"] = random.uniform(13.2, 14.0)
+            self.targets["speed"] = random.uniform(0, 260)
 
-        boost = 0.8 + ((rpm - 800) / 6700.0) * 1.0 + random.uniform(-0.05, 0.05)
-        self.state["boost"] = max(0.0, min(boost, 2.0))
+        # Move current values very slowly toward targets
+        smooth_factor = 0.01  # smaller = slower change, smoother
+        for key in self.state:
+            current = self.state[key]
+            target = self.targets[key]
+            self.state[key] += (target - current) * smooth_factor
 
-        coolant = self.state["coolant"]
-        if coolant < 90:
-            coolant += random.uniform(0.1, 0.5)
-        elif rpm > 4000:
-            coolant += random.uniform(0.0, 0.3)
-        else:
-            coolant -= random.uniform(0.1, 0.3)
-        self.state["coolant"] = max(60, min(coolant, 110))
-
-        self.state["intake"] = 20 + self.state["boost"] * 15 + random.uniform(-2, 2)
-        self.state["voltage"] = 13.8 + random.uniform(-0.2, 0.2)
-        self.state["lambda1"] = 0.95 + random.uniform(-0.05, 0.05)
-        self.state["lambda2"] = 0.85 + random.uniform(-0.1, 0.1)
 
     def send_response(self, param_bytes, key):
         value = self.state[key]
@@ -128,7 +128,8 @@ class VCANThread(threading.Thread):
                           data=bytearray(response),
                           is_extended_id=True)
         self.can_bus.send(msg)
-        #self.logger.debug(f"Sent {key} = {value:.2f} -> {msg.data.hex()}")
+        # Uncomment for debugging:
+        # self.logger.debug(f"Sent {key} = {value:.2f} -> {msg.data.hex()}")
 
     def encode_value(self, key, value):
         if key == "boost":
@@ -149,4 +150,7 @@ class VCANThread(threading.Thread):
         elif key == "rpm":
             raw = int(value / 40)
             return [raw & 0xFF]
+        elif key == "speed":
+            raw = int(value * 128)  # scale: value * 65536 / 512 = value * 128
+            return list(struct.pack(">H", raw))
         return None

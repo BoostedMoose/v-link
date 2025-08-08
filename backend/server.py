@@ -175,7 +175,15 @@ class ServerThread(threading.Thread):
     # Handle UI update requests
     @socketio.on('request', namespace='/data')
     def handle_can_request():
-        socketio.emit('data', shared_state.car_data, namespace='/data')
+
+        # Limit output to 2 decimal places
+        data = {
+            k: round(v, 2) if isinstance(v, float) else v
+            for k, v in shared_state.car_data.items()
+        }
+
+        socketio.emit('data', data, namespace='/data')
+
 
 
     # Handle system  tasks
