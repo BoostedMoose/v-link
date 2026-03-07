@@ -152,6 +152,25 @@ const SideBar = ({ collapseLength }) => {
                     </div>
                 </Link>
                 <Link
+                    onClick={() => handleTabChange(8)}
+                    isActive={currentTab === 8}
+                    activeColor={theme.colors.light}
+                    inactiveColor={theme.colors.medium}>
+                    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'left' }}>
+                        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px', width: '100%' }}>
+                            <IconMedium
+                                isActive={currentTab === 8}
+                                theme={theme}
+                                activeColor={theme.colors.theme[themeColor].active}
+                                defaultColor={theme.colors.theme[themeColor].default}
+                                inactiveColor={theme.colors.medium}>
+                                <use xlinkHref={`/assets/svg/buttons/system.svg#system`}></use>
+                            </IconMedium>
+                            Diagnostics
+                        </div>
+                    </div>
+                </Link>
+                <Link
                     onClick={() => handleTabChange(2)}
                     isActive={currentTab === 2}
                     activeColor={theme.colors.light}

@@ -240,5 +240,10 @@
             "bit_index": 0,
             "invert": false
         }
+    ],
+    "dtc_modules": [
+        { "id": "0x43", "name": "DDM", "interface": "can2" },
+        { "id": "0x7A", "name": "ECM", "interface": "can2" },
+        { "id": "0x50", "name": "CEM", "interface": "can2" }
     ]
 }

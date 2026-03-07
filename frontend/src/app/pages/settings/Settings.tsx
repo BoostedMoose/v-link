@@ -100,6 +100,17 @@ const Settings = () => {
   const pendingSettingsRef = useRef(currentSettings);
   const SAVE_DEBOUNCE_MS = 500;
 
+  type DtcResult = {
+    name: string
+    id: string
+    can_id: string | null
+    has_dtc: boolean | null
+    dtc: string | null
+  }
+  const [dtcStatus, setDtcStatus] = useState<'idle' | 'scanning' | 'complete'>('idle')
+  const [dtcResults, setDtcResults] = useState<DtcResult[]>([])
+  const [reportPath, setReportPath] = useState<string | null>(null)
+
   const setKeyStroke = APP((state) => state.setKeyStroke);
   const setSwitchPage = APP((state) => state.setSwitchPage);
   const setPauseKeyBinds = APP((state) => state.setPauseKeyBinds);
@@ -114,6 +125,20 @@ const Settings = () => {
       }
     });
   }, [modules]);
+
+  /* DTC socket listeners */
+  useEffect(() => {
+    socket.dtc.on('progress', (r: DtcResult) => setDtcResults(prev => [...prev, r]))
+    socket.dtc.on('complete', () => setDtcStatus('complete'))
+    socket.dtc.on('error',    () => setDtcStatus('idle'))
+    socket.dtc.on('report_saved', ({ path }: { path: string }) => setReportPath(path))
+    return () => {
+      socket.dtc.off('progress')
+      socket.dtc.off('complete')
+      socket.dtc.off('error')
+      socket.dtc.off('report_saved')
+    }
+  }, [])
 
   useEffect(() => {
     if (!navigator?.mediaDevices?.enumerateDevices) return;
@@ -749,6 +774,81 @@ const Settings = () => {
         {settingPage === 7 &&
           <>
            {renderSetting("reverseCam", currentSettings)}
+            <p />
+          </>
+        }
+
+        {settingPage === 8 &&
+          <>
+            <Element>
+              <Title>Diagnostics</Title>
+            </Element>
+            <Element>
+              <Caption2>Scan Known Modules</Caption2>
+              <Divider />
+              <Button
+                theme={theme}
+                disabled={dtcStatus === 'scanning'}
+                onClick={() => { setDtcStatus('scanning'); setDtcResults([]); setReportPath(null); socket.dtc.emit('read', { mode: 'targeted' }) }}>
+                {dtcStatus === 'scanning' ? 'Scanning...' : 'Read DTC'}
+              </Button>
+            </Element>
+            <Element>
+              <Caption2>Full Scan (00 - FF)</Caption2>
+              <Divider />
+              <Button
+                theme={theme}
+                disabled={dtcStatus === 'scanning'}
+                onClick={() => { setDtcStatus('scanning'); setDtcResults([]); setReportPath(null); socket.dtc.emit('read', { mode: 'full' }) }}>
+                {dtcStatus === 'scanning' ? 'Scanning...' : 'Scan All'}
+              </Button>
+            </Element>
+
+            {dtcStatus === 'scanning' &&
+              <Element>
+                <Caption2 style={{ color: theme.colors.medium }}>Cancel current scan</Caption2>
+                <Divider />
+                <Button
+                  theme={theme}
+                  onClick={() => socket.dtc.emit('stop')}>
+                  Stop
+                </Button>
+              </Element>
+            }
+
+            {dtcResults.map((r) => (
+              <Element key={r.id}>
+                <Caption2>{r.name} ({r.id})</Caption2>
+                <Divider />
+                <Caption2 style={{ color: theme.colors.medium, minWidth: '110px', textAlign: 'center' }}>
+                  {r.can_id ?? '—'}
+                </Caption2>
+                <Divider />
+                <Caption2 style={{
+                  color: r.has_dtc === null
+                    ? theme.colors.medium
+                    : r.has_dtc
+                      ? '#ff4444'
+                      : theme.colors.theme[themeColor].active
+                }}>
+                  {r.has_dtc === null ? 'No response' : r.has_dtc ? r.dtc : '✓'}
+                </Caption2>
+              </Element>
+            ))}
+
+            {dtcStatus === 'complete' && dtcResults.length > 0 &&
+              <Element>
+                <Caption2 style={{ color: theme.colors.medium }}>
+                  {reportPath ? `Saved: ${reportPath}` : 'Export results'}
+                </Caption2>
+                <Divider />
+                <Button
+                  theme={theme}
+                  onClick={() => { setReportPath(null); socket.dtc.emit('save_report', { results: dtcResults, mode: 'scan' }) }}>
+                  Save Report
+                </Button>
+              </Element>
+            }
             <p />
           </>
         }

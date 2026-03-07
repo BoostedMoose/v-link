@@ -1,4 +1,5 @@
 import threading
+import queue
 import os
 import time
 import subprocess
@@ -426,6 +427,113 @@ class ServerThread(threading.Thread):
     def print_most_message(args):
         logger.debug(f'[Server] Received most message on most namespace: {args}')
 
+
+    # Handle DTC read requests
+    @socketio.on('read', namespace='/dtc')
+    def handle_dtc_read(payload=None):
+        can_thread = shared_state.THREADS.get('can')
+        if not can_thread or not can_thread.is_alive():
+            socketio.emit('error', 'CAN module not running', namespace='/dtc')
+            return
+
+        mode = (payload or {}).get('mode', 'targeted')
+        can_settings = settings.load_settings('can')
+
+        if mode == 'full':
+            primary_iface = 'can2'
+            for iface in can_settings.get('interfaces', []):
+                if iface.get('enabled'):
+                    primary_iface = iface['channel']
+                    break
+            if shared_state.vCan:
+                primary_iface = 'vcan0'
+
+            dtc_modules = [
+                {'id': hex(i), 'name': hex(i), 'interface': primary_iface}
+                for i in range(0x00, 0x100)
+            ]
+            scan_kwargs = {'timeout': 0.5, 'skip_timeouts': True}
+        else:
+            dtc_modules = can_settings.get('dtc_modules', [])
+            if not dtc_modules:
+                socketio.emit('error', 'No DTC modules configured', namespace='/dtc')
+                return
+            scan_kwargs = {'timeout': 2.0, 'skip_timeouts': False}
+
+        # Create/reset a stop event so the user can cancel mid-scan
+        stop_event = threading.Event()
+        stop_event.clear()
+        shared_state.dtc_stop_event = stop_event
+        scan_kwargs['stop_event'] = stop_event
+
+        # Bridge queue: scan_dtc (real OS thread) puts events here;
+        # an eventlet green thread reads and emits them to the frontend.
+        # This is required because socketio.emit() must be called from
+        # an eventlet green thread when async_mode='eventlet'.
+        result_queue = queue.Queue()
+
+        def emit_fn(event, data):
+            result_queue.put((event, data))
+
+        def relay_events():
+            while True:
+                try:
+                    event, data = result_queue.get(block=False)
+                    socketio.emit(event, data, namespace='/dtc')
+                    if event in ('complete', 'error'):
+                        break
+                except queue.Empty:
+                    eventlet.sleep(0.05)
+
+        threading.Thread(
+            target=can_thread.scan_dtc,
+            args=(dtc_modules, emit_fn),
+            kwargs=scan_kwargs,
+            daemon=True
+        ).start()
+        socketio.start_background_task(relay_events)
+
+    # Handle DTC stop requests
+    @socketio.on('stop', namespace='/dtc')
+    def handle_dtc_stop():
+        stop_event = getattr(shared_state, 'dtc_stop_event', None)
+        if stop_event:
+            stop_event.set()
+            logger.info('[DTC] Stop requested by user.')
+
+    # Handle DTC report save requests
+    @socketio.on('save_report', namespace='/dtc')
+    def handle_dtc_save_report(payload):
+        import datetime
+        results = (payload or {}).get('results', [])
+        mode    = (payload or {}).get('mode', 'unknown')
+
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        report_dir = os.path.expanduser('~/.config/v-link/dtc_reports')
+        os.makedirs(report_dir, exist_ok=True)
+        filepath = os.path.join(report_dir, f'dtc_{timestamp}.txt')
+
+        lines = [
+            'DTC Scan Report',
+            f'Date  : {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+            f'Mode  : {mode}',
+            '',
+            f'{"Module":<10} {"ID":<8} {"Response CAN ID":<18} {"Status"}',
+            f'{"-"*10} {"-"*8} {"-"*18} {"-"*20}',
+        ]
+        for r in results:
+            status = 'No response' if r.get('has_dtc') is None else (f'DTC: {r["dtc"]}' if r['has_dtc'] else 'OK')
+            can_id = r.get('can_id') or '—'
+            lines.append(f'{r["name"]:<10} {r["id"]:<8} {can_id:<18} {status}')
+
+        try:
+            with open(filepath, 'w') as f:
+                f.write('\n'.join(lines))
+            socketio.emit('report_saved', {'path': filepath}, namespace='/dtc')
+            logger.info(f'[DTC] Report saved to {filepath}')
+        except Exception as e:
+            logger.error(f'[DTC] Failed to save report: {e}')
+            socketio.emit('error', f'Failed to save report: {e}', namespace='/dtc')
 
     # Handle UI log messages
     @socketio.on('info', namespace='/log')

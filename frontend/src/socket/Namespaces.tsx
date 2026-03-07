@@ -17,6 +17,7 @@ export function useNamespaces() {
       cam: io("ws://localhost:4001/cam"),
       
       data: io("ws://localhost:4001/data"),
+      dtc:  io("ws://localhost:4001/dtc"),
     };
   }
   return sockets;

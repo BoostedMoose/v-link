@@ -2,6 +2,7 @@ import threading
 import time
 import can
 import random
+import queue
 
 from .. import settings
 from ..shared.shared_state import shared_state
@@ -271,6 +272,87 @@ class CANThread(threading.Thread):
         for bus in self.can_buses.values():
             bus.shutdown()
 
+    def scan_dtc(self, dtc_modules, emit_fn, timeout=2.0, skip_timeouts=False, stop_event=None):
+        self.logger.info(f'[DTC] Starting DTC scan ({len(dtc_modules)} modules, timeout={timeout}s)')
+
+        for s in self.broadcast_tasks:
+            s.pause()
+        time.sleep(0.15)
+
+        original_filters = {}
+        dtc_listener = DTCListener()
+
+        try:
+            for ch, bus in self.can_buses.items():
+                original_filters[ch] = bus.filters
+                bus.set_filters([])
+
+            for notifier in self.notifiers.values():
+                notifier.listeners.append(dtc_listener)
+
+            for module in dtc_modules:
+                if stop_event and stop_event.is_set():
+                    self.logger.info('[DTC] Scan stopped by user.')
+                    break
+
+                module_id = int(module['id'], 16)
+                iface = module['interface']
+                bus = self.can_buses.get(iface)
+                if not bus:
+                    self.logger.warning(f'[DTC] Interface "{iface}" not found, skipping module {module["name"]}')
+                    continue
+
+                q = dtc_listener.register(module_id)
+                data = [0xCB, module_id, 0xAE, 0x1B, 0x00, 0x00, 0x00, 0x00]
+                try:
+                    bus.send(can.Message(
+                        arbitration_id=0x000FFFFE,
+                        data=bytes(data),
+                        is_extended_id=True
+                    ))
+                except Exception as e:
+                    self.logger.error(f'[DTC] Failed to send request for {module["name"]}: {e}')
+                    continue
+
+                try:
+                    result = q.get(timeout=timeout)
+                    response_data = result['data']
+                    can_id = result['can_id']
+                    has_dtc = not (response_data[4] == 0x00 and response_data[5] == 0x00)
+                    dtc_val = f"{response_data[4]:02X} {response_data[5]:02X}" if has_dtc else None
+                    self.logger.info(f'[DTC] {module["name"]} ({module["id"]}): {"DTC " + dtc_val if has_dtc else "OK"} (rep_id=0x{can_id:08X})')
+                    emit_fn('progress', {
+                        'name': module['name'],
+                        'id': module['id'],
+                        'can_id': f'0x{can_id:08X}',
+                        'has_dtc': has_dtc,
+                        'dtc': dtc_val
+                    })
+                except queue.Empty:
+                    self.logger.debug(f'[DTC] No response from {module["name"]} ({module["id"]})')
+                    if not skip_timeouts:
+                        emit_fn('progress', {
+                            'name': module['name'],
+                            'id': module['id'],
+                            'can_id': None,
+                            'has_dtc': None,
+                            'dtc': None
+                        })
+
+                time.sleep(0.05)
+
+        finally:
+            for ch, bus in self.can_buses.items():
+                bus.set_filters(original_filters.get(ch, []))
+            for notifier in self.notifiers.values():
+                if dtc_listener in notifier.listeners:
+                    notifier.listeners.remove(dtc_listener)
+            for s in self.broadcast_tasks:
+                s.resume()
+            self.logger.info('[DTC] Scan complete, scheduler resumed.')
+
+        emit_fn('complete', None)
+
 
 #############################################################
 # CAN Scheduler - Sending out scheduled messages to network #
@@ -288,6 +370,7 @@ class CANScheduler(threading.Thread):
 
         self.interval = 0.01  # 100Hz tick, one message every 10ms
         self.events = {}
+        self._paused = threading.Event()
 
         # Initialize events for all reply IDs if wait_for_ecu is enabled
         if self.wait_for_ecu:
@@ -325,9 +408,19 @@ class CANScheduler(threading.Thread):
             3: 1
             })
         
+    def pause(self):
+        self._paused.set()
+
+    def resume(self):
+        self._paused.clear()
+
     def run(self):
         self.logger.info('[CAN] Message Scheduler started.')
         while not self._stop_event.is_set():
+            if self._paused.is_set():
+                time.sleep(0.01)
+                continue
+
             # Get next token from pool (i.e. priority)
             token = next(self.token_stream)
 
@@ -465,3 +558,23 @@ class CANListener(can.Listener):
                     
         except Exception as e:
             self.logger.error(f'[CAN] CAN listener error: {e}')
+
+
+#############################################################
+# DTC Listener - Listens for DTC responses                  #
+#############################################################
+
+class DTCListener(can.Listener):
+    def __init__(self):
+        self.queues = {}  # module_id (int) -> queue.Queue
+
+    def register(self, module_id):
+        self.queues[module_id] = queue.Queue()
+        return self.queues[module_id]
+
+    def on_message_received(self, msg):
+        data = list(msg.data)
+        if len(data) >= 6 and data[2] == 0xEE and data[3] == 0x1B:
+            q = self.queues.get(data[1])
+            if q:
+                q.put({'data': data, 'can_id': msg.arbitration_id})
