@@ -9,6 +9,7 @@ import { Typography } from '@/theme/styles/Typography';
 
 import { APP, ModuleState, useThemeColor } from '@/store/Store';
 import Diagnostics from '@/app/pages/settings/Diagnostics';
+import { openModal } from '@/app/components/Modal';
 
 import { useNamespaces } from '@/socket/Namespaces';
 const socket = useNamespaces();
