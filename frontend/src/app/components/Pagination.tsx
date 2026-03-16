@@ -1,5 +1,5 @@
 import styled, { useTheme } from 'styled-components';
-import { APP } from '../../store/Store';
+import { useThemeColor } from '@/store/Store';
 
 const Dots = styled.div`
   height: 20px;
@@ -12,10 +12,18 @@ const Dots = styled.div`
   margin-bottom: 20px;
 `;
 
-const Pagination = ({ pages, colorActive, colorInactive, currentPage, dotSize = 20 }) => {
+interface PaginationProps {
+    pages: number;
+    colorActive?: string;
+    colorInactive?: string;
+    currentPage: number;
+    dotSize?: number;
+}
+
+const Pagination = ({ pages, colorActive, colorInactive, currentPage, dotSize = 20 }: PaginationProps) => {
     const theme = useTheme()
 
-    const colorTheme = APP((state) => state.settings.general.colorTheme.value).toLowerCase()
+    const colorTheme = useThemeColor()
 
     const circles = [];
 

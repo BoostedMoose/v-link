@@ -1,7 +1,16 @@
-import styled, { css, useTheme } from 'styled-components';
-import hexToRgba from '../../app/helper/HexToRGBA'
+import styled from 'styled-components';
+import hexToRgba from '@/app/helper/HexToRGBA'
 
-export const IconSmall = styled.svg`
+interface BaseIconProps {
+  isActive?: boolean;
+  color?: string;
+  activeColor?: string;
+  inactiveColor?: string;
+  defaultColor?: string;
+  glowColor?: string;
+}
+
+export const IconSmall = styled.svg<Pick<BaseIconProps, 'isActive'>>`
     fill: none;
     stroke-width: 3px;
     width: ${({ theme }) => theme.icons.small};
@@ -11,78 +20,98 @@ export const IconSmall = styled.svg`
     transition: stroke 1s ease-in-out;
 `;
 
-export const IconMedium = styled.svg`
+export const IconMedium = styled.svg<BaseIconProps>`
     width: ${({ theme }) => theme.icons.medium};
     height: ${({ theme }) => theme.icons.medium};
     fill: none;
     stroke-width: 3px;
-    stroke: ${({ isActive, theme, color, activeColor, inactiveColor }) =>
+    stroke: ${({ isActive, color, activeColor, inactiveColor }) =>
         color ? color : isActive ? activeColor : inactiveColor};
     transition: fill 0.3s ease-in-out;
-    filter: ${({ isActive, theme, activeColor}) =>
+    filter: ${({ isActive, activeColor }) =>
         isActive ? `drop-shadow(${activeColor})` : 'none'};
 `;
 
-export const IconLarge = styled.svg`
+export const IconLarge = styled.svg<BaseIconProps>`
     width: ${({ theme }) => theme.icons.large};
     height: ${({ theme }) => theme.icons.large};
     fill:none;
-    stroke: ${({ isActive, theme, color, activeColor, inactiveColor }) =>
+    stroke: ${({ isActive, color, activeColor, inactiveColor }) =>
         color ? color : isActive ? activeColor : inactiveColor};
     transition: fill 0.3s ease-in-out;
     filter: ${({ isActive, theme }) =>
         isActive ? `drop-shadow(${theme.colors.theme.blue.navGlow})` : 'none'};
     &:hover {
-        fill: ${({ isActive, theme, activeColor, defaultColor }) =>
+        fill: ${({ isActive, activeColor, defaultColor }) =>
         isActive ? activeColor : defaultColor};
-        filter: ${({ isActive, theme }) =>
+        filter: ${({ isActive, activeColor }) =>
         isActive ? `drop-shadow(${activeColor})` : 'none'};
     }
 `;
 
-export const IconExtraLarge = styled.svg`
+interface ExtraLargeIconProps {
+  isActive?: boolean;
+  activeColor?: string;
+  defaultColor?: string;
+  color?: string;
+}
+
+export const IconExtraLarge = styled.svg<ExtraLargeIconProps>`
     width: ${({ theme }) => theme.icons.xlarge};
     height: ${({ theme }) => theme.icons.xlarge};
-    fill: ${({ isActive, theme, activeColor, defaultColor }) =>
+    fill: ${({ isActive, activeColor, defaultColor }) =>
         isActive ? activeColor : defaultColor};
     transition: fill 0.3s ease-in-out;
     filter: ${({ color }) =>
-        `drop-shadow(0 0px 100px ${hexToRgba(color, 1)})
+        `drop-shadow(0 0px 100px ${hexToRgba(color ?? 'transparent', 1)})
         `};
     &:hover {
-        fill: ${({ defaultColor }) =>  defaultColor };
+        fill: ${({ defaultColor }) => defaultColor};
     }
 `;
 
-
-export const IconNav = styled.svg`
+export const IconNav = styled.svg<BaseIconProps>`
 stroke-linecap: round;
     fill: none;
     width: ${({ theme }) => theme.icons.large};
     height: ${({ theme }) => theme.icons.large};
     stroke-width: 2.5px;
-    stroke: ${({ isActive, theme, activeColor, defaultColor }) =>
+    stroke: ${({ isActive, activeColor, defaultColor }) =>
         isActive ? activeColor : defaultColor};
     transition: fill 0.3s ease-in-out;
-    filter: ${({ isActive, theme, glowColor }) =>
+    filter: ${({ isActive, glowColor }) =>
         isActive ? `drop-shadow(${glowColor})` : 'none'};
     &:hover {
-        stroke: ${({ isActive, theme, activeColor, defaultColor }) =>
+        stroke: ${({ isActive, activeColor, defaultColor }) =>
         isActive ? activeColor : defaultColor};
-        filter: ${({ isActive, theme, defaultColor }) =>
+        filter: ${({ isActive, defaultColor }) =>
         isActive ? `drop-shadow(${defaultColor})` : 'none'};
     }
 `;
 
-export const CustomIcon = styled.svg`
-    width: ${({ size }) => size};
-    height: ${({ size }) => size};
+interface CustomIconProps {
+  size?: number;
+  stroke?: number;
+  isActive?: boolean;
+  color?: string;
+  activeColor?: string;
+  inactiveColor?: string;
+  defaultColor?: string;
+  glowColor?: string;
+  fill?: string;
+  theme?: object;
+}
+
+export const CustomIcon = styled.svg<CustomIconProps>`
+    width: ${({ size }) => size}px;
+    height: ${({ size }) => size}px;
+    overflow: visible;
     stroke-width: ${({ stroke }) => stroke};
     stroke-linecap: round;
     fill: none;
-    stroke: ${({ isActive, theme, color, activeColor, defaultColor }) =>
+    stroke: ${({ isActive, color, activeColor, defaultColor }) =>
         color ? color : isActive ? activeColor : defaultColor};
     transition: fill 0.3s ease-in-out;
-    filter: ${({ isActive, theme, glowColor }) =>
+    filter: ${({ isActive, glowColor }) =>
         isActive ? `drop-shadow(${glowColor})` : 'none'};
 `;

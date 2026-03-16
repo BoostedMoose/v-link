@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef, useMemo, lazy, Suspense, useCallback } from 'react';
-import { APP } from '../../../store/Store';
+import React from 'react';
+import { APP, useThemeColor } from '@/store/Store';
 import styled, { useTheme } from 'styled-components';
 import { Oval } from 'react-loader-spinner';
 
-import { Fade } from '../../../theme/styles/Effects';
-import Pagination from '../../components/Pagination';
+import { Fade } from '@/theme/styles/Effects';
+import Pagination from '@/app/components/Pagination';
 
 // Lazy load components
 const Classic = lazy(() => import('./classic/Classic'));
@@ -28,17 +29,24 @@ const Wrapper = styled.div`
   overflow: hidden;
 `;
 
-const PageWrapper = styled.div.attrs(props => ({
+interface PageWrapperProps {
+  translateX: string;
+  opacity: number;
+  isTransitioning: boolean;
+  isDragging: boolean;
+}
+
+const PageWrapper = styled.div.attrs<PageWrapperProps>(props => ({
   style: {
     transform: `translate3d(${props.translateX}, 0, 0)`,
     opacity: props.opacity,
-    transition: props.isTransitioning 
+    transition: props.isTransitioning
       ? 'transform 0.4s ease-out, opacity 0.4s ease-out'
-      : props.isDragging 
-        ? 'none' 
+      : props.isDragging
+        ? 'none'
         : 'transform 0.3s ease-out, opacity 0.3s ease-out'
   }
-}))`
+}))<PageWrapperProps>`
   position: absolute;
   top: 0;
   left: 0;
@@ -64,8 +72,8 @@ const MIN_DRAG_DISTANCE = 10;
 
 function Dashboard() {
   const theme = useTheme();
-  const dashBoardRef = useRef(null);
-  const resizeDebounceTimeout = useRef(null);
+  const dashBoardRef = useRef<HTMLDivElement | null>(null);
+  const resizeDebounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   
   // Refs for drag state to avoid unnecessary re-renders
@@ -77,12 +85,14 @@ function Dashboard() {
     isPointerDown: false
   });
   
-  const animationFrameRef = useRef(null);
+  const animationFrameRef = useRef<number | null>(null);
   const containerWidthRef = useRef(window.innerWidth);
 
-  const defaultDash = APP((state) => state.settings.general.defaultDash.value);
-  const colorTheme = APP((state) => state.settings.general.colorTheme.value).toLowerCase();
-  const app_bindings = APP((state) => state.settings.app_bindings);
+  type GeneralSettings = { defaultDash: { value: string }; colorTheme: { value: string } };
+  type AppBindings = { left: { value: string }; right: { value: string } };
+  const defaultDash = APP((state) => (state.settings.general as GeneralSettings | undefined)?.defaultDash?.value ?? 'Classic');
+  const colorTheme = useThemeColor();
+  const app_bindings = APP((state) => state.settings.app_bindings as AppBindings | undefined);
   const appUpdate = APP((state) => state.update);
   const keyStroke = APP((state) => state.keyStroke);
 
@@ -101,7 +111,7 @@ function Dashboard() {
   // Reduced state - only what needs to trigger re-renders
   const [currentPageIndex, setCurrentPageIndex] = useState(defaultComponentIndex);
   const [isTransitioning, setIsTransitioning] = useState(false);
-  const [transitionState, setTransitionState] = useState({
+  const [transitionState, setTransitionState] = useState<{ oldIndex: number | null; newIndex: number | null; direction: string | null }>({
     oldIndex: null,
     newIndex: null,
     direction: null
@@ -117,14 +127,14 @@ function Dashboard() {
   });
 
   // Utility functions
-  const getAdjacentIndices = useCallback((index) => {
+  const getAdjacentIndices = useCallback((index: number) => {
     const prevIndex = index === 0 ? components.length - 1 : index - 1;
     const nextIndex = index === components.length - 1 ? 0 : index + 1;
     return { prevIndex, nextIndex };
   }, [components.length]);
 
   // Optimized drag percentage calculation using ref
-  const calculateDragPercentage = useCallback((dragDistance) => {
+  const calculateDragPercentage = useCallback((dragDistance: number) => {
     return Math.max(-100, Math.min(100, (dragDistance / containerWidthRef.current) * 100));
   }, []);
 
@@ -175,7 +185,7 @@ function Dashboard() {
     }
     
     return () => {
-      clearTimeout(resizeDebounceTimeout.current);
+      if (resizeDebounceTimeout.current) clearTimeout(resizeDebounceTimeout.current);
       window.removeEventListener('resize', handleResize);
     };
   }, []);
@@ -198,7 +208,7 @@ function Dashboard() {
   }, [windowSize, appUpdate]);
 
   // Transition logic
-  const performTransition = useCallback((direction) => {
+  const performTransition = useCallback((direction: string) => {
     if (isTransitioning) return;
 
     const newIndex = direction === 'left' 
@@ -239,7 +249,7 @@ function Dashboard() {
   const swipeRight = useCallback(() => performTransition('right'), [performTransition]);
 
   // Optimized pointer handlers using refs
-  const handlePointerStart = useCallback((position) => {
+  const handlePointerStart = useCallback((position: number) => {
     if (isTransitioning) return;
     
     dragStateRef.current = {
@@ -255,7 +265,7 @@ function Dashboard() {
   const updateDragRenderRef = useRef(updateDragRender);
   updateDragRenderRef.current = updateDragRender;
 
-  const handlePointerMove = useCallback((position) => {
+  const handlePointerMove = useCallback((position: number) => {
     const dragState = dragStateRef.current;
     
     if (isTransitioning || !dragState.isPointerDown) return;
@@ -318,7 +328,7 @@ function Dashboard() {
   }, [isTransitioning, calculateDragPercentage, swipeRight, swipeLeft]);
 
   // Event handlers
-  const handleDoubleClick = useCallback((event) => {
+  const handleDoubleClick = useCallback((event: React.MouseEvent) => {
     const clickX = event.clientX;
     const halfWindowWidth = window.innerWidth / 2;
     clickX < halfWindowWidth ? swipeRight() : swipeLeft();
@@ -347,12 +357,12 @@ function Dashboard() {
 
   // Keyboard navigation
   useEffect(() => {
-    if (keyStroke === app_bindings.left.value) swipeRight();
-    if (keyStroke === app_bindings.right.value) swipeLeft();
-  }, [keyStroke, app_bindings.left.value, app_bindings.right.value, swipeRight, swipeLeft]);
+    if (keyStroke === app_bindings?.left?.value) swipeRight();
+    if (keyStroke === app_bindings?.right?.value) swipeLeft();
+  }, [keyStroke, app_bindings, swipeRight, swipeLeft]);
 
   // Get transform and opacity for each component (memoized with fewer dependencies)
-  const getComponentTransform = useCallback((index) => {
+  const getComponentTransform = useCallback((index: number) => {
     const { prevIndex, nextIndex } = getAdjacentIndices(currentPageIndex);
 
     if (isDragRendering) {
@@ -400,7 +410,7 @@ function Dashboard() {
   }, [currentPageIndex, isDragRendering, dragRenderOffset, isTransitioning, transitionState, getAdjacentIndices]);
 
   // Determine which components to render (optimized)
-  const shouldRender = useCallback((index) => {
+  const shouldRender = useCallback((index: number) => {
     const { prevIndex, nextIndex } = getAdjacentIndices(currentPageIndex);
 
     if (isDragRendering) {

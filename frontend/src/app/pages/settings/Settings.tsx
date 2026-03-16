@@ -3,16 +3,47 @@ import { useState, useEffect, useRef, ReactNode } from 'react';
 import styled, { useTheme } from 'styled-components';
 import ScrollContainer from 'react-indiana-drag-scroll'
 
-import { ToggleSwitch, Select, Input, Button } from '../../../theme/styles/Inputs';
-import CustomSlider from '../../components/CustomSlider';
-import { Typography } from '../../../theme/styles/Typography';
+import { ToggleSwitch, Select, Input, Button } from '@/theme/styles/Inputs';
+import CustomSlider from '@/app/components/CustomSlider';
+import { Typography } from '@/theme/styles/Typography';
 
-import { APP } from '../../../store/Store';
-import { openModal } from '../../components/Modal';
+import { APP, ModuleState, useThemeColor } from '@/store/Store';
+import { openModal } from '@/app/components/Modal';
 
-import { useNamespaces } from '../../../socket/Namespaces';
-import { current } from 'immer';
+import { useNamespaces } from '@/socket/Namespaces';
 const socket = useNamespaces();
+
+type SettingContent = {
+  label?: string;
+  value: string | number | boolean;
+  type?: string;
+  options?: string[];
+  min?: number;
+  max?: number;
+  step?: number;
+  ui?: string;
+};
+
+type SettingsGroup = {
+  title?: string;
+  type?: string;
+  [key: string]: SettingContent | string | undefined;
+};
+
+type Constants = {
+  modules: Record<string, boolean>;
+  chart_input_current: number;
+  chart_input_max: number;
+};
+
+type AppSettings = {
+  constants: Constants;
+  [key: string]: SettingsGroup | Constants | unknown;
+};
+
+type DataStoreMap = Record<string, Record<string, { label: string }>>;
+type ModuleSelectorFn = (select: (s: ModuleState) => ModuleState) => ModuleState;
+type DropdownOption = string | { value: string; label: string };
 
 const Container = styled.div`
     flex: 1;
@@ -77,9 +108,9 @@ const Settings = () => {
 
   /* Load Stores */
   const modules = APP((state) => state.modules)
-  const settings = APP((state) => state.settings)
+  const settings = APP((state) => state.settings) as AppSettings;
   const appUpdate = APP((state) => state.update)
-  const themeColor = APP((state) => state.settings.general.colorTheme.value).toLowerCase();
+  const themeColor = useThemeColor();
   const versionNumber = APP((state) => state.system.version);
   const settingPage = APP((state) => state.system.settingPage);
 
@@ -94,10 +125,10 @@ const Settings = () => {
 
   const [save, setSave] = useState(true)
   const [reset, setReset] = useState(false)
-  const [currentSettings, setCurrentSettings] = useState(structuredClone(settings));
+  const [currentSettings, setCurrentSettings] = useState<AppSettings>(structuredClone(settings) as AppSettings);
   const [cameraDevices, setCameraDevices] = useState<{ deviceId: string; label: string }[]>([]);
-  const saveTimeoutRef = useRef(null);
-  const pendingSettingsRef = useRef(currentSettings);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSettingsRef = useRef<AppSettings>(currentSettings);
   const SAVE_DEBOUNCE_MS = 500;
 
   type DtcResult = {
@@ -178,7 +209,7 @@ const Settings = () => {
   /* Reset container to top when settings are reset */
   useEffect(() => {
     if (reset) {
-      setCurrentSettings(settings);
+      setCurrentSettings(settings as AppSettings);
       setReset(false);
 
       if (scrollRef.current) {
@@ -189,16 +220,17 @@ const Settings = () => {
 
 
   /* Create combined data store for dropdown */
-  const dataStores = {}
+  const dataStores: DataStoreMap = {};
   Object.entries(modules).map(([key, module]) => {
-    const currentModule = module((state) => state);
-    if (currentModule.settings.type && currentModule.settings.type === 'data') {
-      Object.assign(dataStores, { [key]: currentModule.settings.sensors })
+    const currentModule = (module as ModuleSelectorFn)((state) => state);
+    const moduleSettings = currentModule.settings as Record<string, unknown> & { type?: string; sensors?: Record<string, { label: string }> };
+    if (moduleSettings.type && moduleSettings.type === 'data') {
+      Object.assign(dataStores, { [key]: moduleSettings.sensors })
     }
   });
 
   /* Add Settings */
-  const scheduleSave = (nextSettings) => {
+  const scheduleSave = (nextSettings: AppSettings) => {
     setSave(false);
     pendingSettingsRef.current = nextSettings;
 
@@ -211,7 +243,7 @@ const Settings = () => {
     }, SAVE_DEBOUNCE_MS);
   };
 
-  const handleAddSetting = (key, currentSettings) => {
+  const handleAddSetting = (key: string, currentSettings: AppSettings) => {
     if (currentSettings.constants.chart_input_current < currentSettings.constants.chart_input_max) {
       const newSetting = {
         type: "can",
@@ -221,12 +253,12 @@ const Settings = () => {
 
       // Check if the key exists in the settings
       if (currentSettings[key]) {
-        const updatedSettingsForKey = { ...currentSettings[key] };
+        const updatedSettingsForKey = { ...(currentSettings[key] as SettingsGroup) };
         const newSettingId = `value_${currentSettings.constants.chart_input_current + 1}`;
-        updatedSettingsForKey[newSettingId] = newSetting;
+        (updatedSettingsForKey as Record<string, unknown>)[newSettingId] = newSetting;
 
         // Update the state with the new settings
-        const nextSettings = {
+        const nextSettings: AppSettings = {
           ...currentSettings,
           constants: {
             ...currentSettings.constants,
@@ -243,14 +275,14 @@ const Settings = () => {
   };
 
   /* Remove Settings */
-  const handleRemoveSetting = (key, currentSettings) => {
+  const handleRemoveSetting = (key: string, currentSettings: AppSettings) => {
     if (currentSettings.constants.chart_input_current > 1) {
-      const updatedSettingsForKey = { ...currentSettings[key] };
+      const updatedSettingsForKey = { ...(currentSettings[key] as SettingsGroup) };
       const settingIdToRemove = `value_${currentSettings.constants.chart_input_current}`;
-      delete updatedSettingsForKey[settingIdToRemove];
+      delete (updatedSettingsForKey as Record<string, unknown>)[settingIdToRemove];
 
       // Update the state with the  minus the removed one
-      const nextSettings = {
+      const nextSettings: AppSettings = {
         ...currentSettings,
         constants: {
           ...currentSettings.constants,
@@ -269,17 +301,17 @@ const Settings = () => {
 
 
   // Change Settings
-  const handleSettingChange = (selectStore, key, name, targetSetting, currentSettings) => {
-    const newSettings = structuredClone(currentSettings);
-    let convertedValue
+  const handleSettingChange = (selectStore: string, key: string, name: string, targetSetting: string | number | boolean, currentSettings: AppSettings) => {
+    const newSettings = structuredClone(currentSettings) as AppSettings;
+    let convertedValue: string | undefined;
     if (selectStore != 'app') {
       convertedValue = Object.keys(dataStores[selectStore]).find(
         (messageKey) => dataStores[selectStore][messageKey].label === targetSetting
       );
-      newSettings[key][name].value = convertedValue || targetSetting;
-      newSettings[key][name].type = selectStore;
+      (newSettings[key] as Record<string, Record<string, unknown>>)[name].value = convertedValue || targetSetting;
+      (newSettings[key] as Record<string, Record<string, unknown>>)[name].type = selectStore;
     } else {
-      newSettings[key][name].value = targetSetting
+      (newSettings[key] as Record<string, Record<string, unknown>>)[name].value = targetSetting;
     }
 
     setCurrentSettings(newSettings);
@@ -287,7 +319,7 @@ const Settings = () => {
   };
 
   // Save Settings
-  function saveSettings(settingsToSave = currentSettings) {
+  function saveSettings(settingsToSave: AppSettings = currentSettings) {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
@@ -299,15 +331,15 @@ const Settings = () => {
   }
 
   // System Tasks
-  function systemTask(request) {
+  function systemTask(request: string) {
 
     if (['quit', 'reboot', 'restart'].includes(request)) {
-      openModal("Exiting...", "Please wait while the app is closing.", null, null)
+      openModal("Exiting...", "Please wait while the app is closing.", undefined, undefined)
       setTimeout(() => {
         socket.sys.emit("systemTask", request);
       }, 1000)
     } else if (request === 'reset') {
-      openModal("Reset", "All Settings have been resetted.", null, null)
+      openModal("Reset", "All Settings have been resetted.", undefined, undefined)
     } else {
       socket.sys.emit("systemTask", request);
     }
@@ -336,12 +368,12 @@ const Settings = () => {
 
 
       if (latestVersion === versionNumber)
-        openModal("No Updates available.", "Check back again later :)", null, null)
+        openModal("No Updates available.", "Check back again later :)", undefined, undefined)
       else {
         openModal("New update available!", `Current: ${versionNumber} \n\n Latest: ${latestVersion}`, "UPDATE NOW", () => systemTask('update'))
       }
     } catch (error) {
-      openModal("Error checking for updates:", error, null, null)
+      openModal("Error checking for updates:", error instanceof Error ? error.message : String(error), undefined, undefined)
     }
   }
 
@@ -349,18 +381,18 @@ const Settings = () => {
   // Toggle Threads
   useEffect(() => {
     if (reset) {
-      setCurrentSettings(settings)
+      setCurrentSettings(settings as AppSettings)
       setReset(false)
     }
   }, [reset])
 
   /* Toggle Threads */
-  function handleIO(module, channel) {
+  function handleIO(_module: string, channel: { emit: (e: string) => void }) {
     channel.emit("toggle");
   }
 
   /* Render Settings */
-  function renderSetting(key, settingsObj) {
+  function renderSetting(key: string, settingsObj: AppSettings): ReactNode {
     // NOTES: Settings are grouped into types
     // "System" Settings control the appearance and behaviour of the app. This is the main settings file.
     // "Data" Settings provide parameters for the app and certain system settings
@@ -386,15 +418,17 @@ const Settings = () => {
 
     if (!settingsObj || !settingsObj[key]) return null;
 
-    if (settingsObj[key]?.ui === 'range') {
-      const { label, value, min, max, step } = settingsObj[key];
+    const block = settingsObj[key] as SettingsGroup;
 
-      const handleRangeChange = (event) => {
+    if (block?.ui === 'range') {
+      const { label, value, min, max, step } = block as unknown as { label: string; value: number; min: number; max: number; step: number };
+
+      const handleRangeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         const newValue = Number(event.target.value);
-        const nextSettings = {
+        const nextSettings: AppSettings = {
           ...settingsObj,
           [key]: {
-            ...settingsObj[key],
+            ...block,
             value: newValue,
           },
         };
@@ -408,7 +442,7 @@ const Settings = () => {
         scheduleSave(nextSettings);
       };
 
-      const labelStyle = key === 'daylight_backlight' ? { whiteSpace: 'nowrap' } : undefined;
+      const labelStyle = key === 'daylight_backlight' ? { whiteSpace: 'nowrap' as const } : undefined;
 
       return (
         <Element>
@@ -432,17 +466,19 @@ const Settings = () => {
     }
 
     // Get label, type, and nested options from setting block
-    const { title, type, ...nestedSettings } = settingsObj[key];
+    const { title, type, ...nestedSettings } = block;
 
-    const nestedElements = Object.entries(nestedSettings).map(([setting, content]) => {
-      let value, label;
-      const dataOptions = {}
+    const nestedElements = Object.entries(nestedSettings).map(([setting, rawContent]) => {
+      const content = rawContent as SettingContent;
+      let value: string | number | boolean;
+      let label: string | undefined;
+      const dataOptions: Record<string, string> = {};
 
       // Get current value
       if (content.value != "") {
-        if (type === "data" && content.type != null && content.type != 'text') {    // Is the setting responsible for handling data and is a data type assigned?               
+        if (type === "data" && content.type != null && content.type != 'text') {    // Is the setting responsible for handling data and is a data type assigned?
           label = content.label
-          value = dataStores[content.type][content.value].label                     // Read content from combined data store
+          value = dataStores[content.type]?.[content.value as string]?.label ?? String(content.value)   // Read content from combined data store
         } else {
           label = content.label                                                     // NO?  Grab label from "system"-store
           value = content.value                                                     // NO?  Grab value from "system"-store
@@ -453,9 +489,9 @@ const Settings = () => {
       }
 
       Object.keys(dataStores).forEach((storeType) => {                          // Dataoptions is mapping the sensor, e.g. "Boost" to the corresponding settingsfile, in this case "can"
-        Object.keys(dataStores[storeType]).forEach((key) => {
-          const label = dataStores[storeType][key].label                        // YES? Grab label from combined data store
-          dataOptions[label] = storeType                                        // YES? Grab data type from combined data store
+        Object.keys(dataStores[storeType]).forEach((sensorKey) => {
+          const sensorLabel = dataStores[storeType][sensorKey].label             // YES? Grab label from combined data store
+          dataOptions[sensorLabel] = storeType                                   // YES? Grab data type from combined data store
         });
       });
 
@@ -464,7 +500,7 @@ const Settings = () => {
       const isText = (content.type === 'text')
 
       const isRearcamDeviceId = key === 'reverseCam' && setting === 'deviceId';
-      const rearcamDeviceOptions = isRearcamDeviceId
+      const rearcamDeviceOptions: DropdownOption[] | null = isRearcamDeviceId
         ? [
           { value: 'default', label: 'Default' },
           ...cameraDevices.map((device) => ({
@@ -474,32 +510,30 @@ const Settings = () => {
         ]
         : null;
 
-      const dropdown = (isText || typeof value === 'number' || typeof value === 'boolean' || key.includes('bindings'))
+      const dropdown: DropdownOption[] | null = (isText || typeof value === 'number' || typeof value === 'boolean' || key.includes('bindings'))
         ? null                                                                    //Yes? Return null
         : ((rearcamDeviceOptions && rearcamDeviceOptions.length > 0)
           ? rearcamDeviceOptions
-          : (content.options || Object.keys(dataOptions).map((key) =>               //No?  Create dropdown from options
-            key
-          )))
+          : (content.options || Object.keys(dataOptions).map((k) => k)))
 
       // Check for boolean setting
       const isBoolean = typeof value === 'boolean';                               // Checks if the setting is a boolean.
       const isBinding = key.includes('bindings')                                  // Checks if the setting handles bindings
 
 
-      const handleChange = (event) => {
-        const { name, value, checked, type } = event.target;                      // Grab info from the handler
+      const handleChange = (event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+        const { name, value, type } = event.target;                              // Grab info from the handler
+        const checked = (event.target as HTMLInputElement).checked;
         const newValue = type === 'checkbox' ? checked :                          // Check if type is a boolean
           type === 'number' ? Number(value) : value;               // Check if type is a number
 
-        //const newStore = dataOptions[newValue]                                    // Define store for selected setting. E.g. "Boost" -> "Oil Pressure" requires a change from "can" to "adc" store.
-        let selectStore
+        let selectStore: string;
 
-        selectStore = (Object.keys(dataOptions).length > 1 && dataOptions[newValue])
-          ? dataOptions[newValue]
+        selectStore = (Object.keys(dataOptions).length > 1 && dataOptions[newValue as string])
+          ? dataOptions[newValue as string]
           : "app";
 
-        const targetSetting = isBoolean ? checked : newValue                      // Handle targetSetting based on type
+        const targetSetting = isBoolean ? checked : newValue;                    // Handle targetSetting based on type
         if (key === 'auto_backlight' && setting === 'autoOpen') {
           socket.app.emit('backlight:update', { auto_enabled: targetSetting });
         }
@@ -507,18 +541,21 @@ const Settings = () => {
       };
 
 
-      const handleBinding = (key, setting) => {
+      const handleBinding = (key: string, setting: string) => {
         // Define the key press handler
-        const handleKeyPress = (event) => {
+        const handleKeyPress = (event: KeyboardEvent) => {
           // Close the modal first
           appUpdate((state) => {
             state.system.modal.visible = false;
           });
 
+          const block = settings[key] as SettingsGroup | undefined;
+          const entry = block?.[setting] as SettingContent | undefined;
+
           if (event.code === 'Escape') {
             socket.log.emit("info", "Key binding cancelled.");
           } else {
-            socket.log.emit("info", `${settings[key][setting].label} bound to: ${event.code}`);
+            socket.log.emit("info", `${entry?.label} bound to: ${event.code}`);
             handleSettingChange("app", key, setting, event.code, settingsObj);
           }
 
@@ -535,11 +572,13 @@ const Settings = () => {
         document.addEventListener('keydown', handleKeyPress);
 
         // Use the openModal function instead of direct state manipulation
+        const block = settings[key] as SettingsGroup | undefined;
+        const entry = block?.[setting] as SettingContent | undefined;
         openModal(
-          settings[key][setting].label,
+          entry?.label ?? '',
           'Press a key to assign or ESC to abort.',
-          null,
-          null
+          undefined,
+          undefined
         );
       };
 
@@ -553,33 +592,33 @@ const Settings = () => {
               ? (<Select
                 name={setting}
                 isActive={true}
-                textSize={theme.typography.caption2.fontSize}
                 onChange={handleChange}
-                value={value}
+                value={value as string}
               >
                 <option value="" disabled>
-                  Select Sensor
+                  N/A
                 </option>
-                {dropdown.map((option) => (
-                  <option key={option.value || option} value={option.value || option}>
-                    {option.label || option}
-                  </option>
-                ))}
+                {dropdown.map((option) => {
+                  const optVal = typeof option === 'string' ? option : option.value;
+                  const optLabel = typeof option === 'string' ? option : option.label;
+                  return (
+                    <option key={optVal} value={optVal}>{optLabel}</option>
+                  );
+                })}
               </Select>)
               : (isBoolean
                 ? (<ToggleSwitch
-                  theme={theme}
                   backgroundColor={theme.colors.medium}
                   defaultColor={theme.colors.theme[themeColor].default}
                   activeColor={theme.colors.theme[themeColor].active}>
-                  <input type="checkbox" name={setting} checked={value} onChange={handleChange} />
+                  <input type="checkbox" name={setting} checked={value as boolean} onChange={handleChange} />
                   <span className="slider"></span>
                 </ToggleSwitch>)
                 : isBinding
                   ? (<Button name={setting} onClick={() => { handleBinding(key, setting) }}>
-                    {value}
+                    {value as string}
                   </Button>)
-                  : <Input name={setting} type={isText ? 'text' : 'number'} value={value} onChange={handleChange} />
+                  : <Input name={setting} type={isText ? 'text' : 'number'} value={value as string | number} onChange={handleChange} />
               )}
           </Spacer>
         </Element>
@@ -600,13 +639,13 @@ const Settings = () => {
 
 
   //Fixing Mouse Wheel Scrolling for IndianaScroll.
-  const scrollRef = useRef(null);
+  const scrollRef = useRef<HTMLElement | null>(null);
 
   // Make sure wheel event is always attached after every render.
   useEffect(() => {
-    const handleWheel = (event) => {
+    const handleWheel = (event: Event) => {
       if (scrollRef.current) {
-        scrollRef.current.scrollTop += event.deltaY; // Scrolls vertically
+        scrollRef.current.scrollTop += (event as WheelEvent).deltaY; // Scrolls vertically
       }
     };
 
@@ -617,7 +656,7 @@ const Settings = () => {
 
     return () => {
       if (container) {
-        container.removeEventListener("wheel", handleWheel, { passive: true });
+        container.removeEventListener("wheel", handleWheel);
       }
     };
   }, [settingPage]); // Make sure useEffect runs again on reset
@@ -633,13 +672,11 @@ const Settings = () => {
         ignoreElements='input, select'
         innerRef={scrollRef}
       >
-        {settingPage === 1 &&
+        {settingPage === 'general' &&
           <>
             {renderSetting("general", currentSettings)}
             {renderSetting("shutdown", currentSettings)}
             {renderSetting("side_bars", currentSettings)}
-            {renderSetting("reverseCam", currentSettings)}
-
             <Element>
               <Title>Toggle Modules</Title>
             </Element>
@@ -649,7 +686,6 @@ const Settings = () => {
                 <Caption2>{`CAN ${canState ? '(Active)' : '(Inactive)'}`}</Caption2>
                 <Divider />
                 <ToggleSwitch
-                  theme={theme}
                   backgroundColor={theme.colors.medium}
                   defaultColor={theme.colors.theme[themeColor].default}
                   activeColor={theme.colors.theme[themeColor].active}>
@@ -664,7 +700,6 @@ const Settings = () => {
                 <Caption2>{`ADC ${adcState ? '(Active)' : '(Inactive)'}`}</Caption2>
                 <Divider />
                 <ToggleSwitch
-                  theme={theme}
                   backgroundColor={theme.colors.medium}
                   defaultColor={theme.colors.theme[themeColor].default}
                   activeColor={theme.colors.theme[themeColor].active}>
@@ -679,7 +714,6 @@ const Settings = () => {
                 <Caption2>{`SWC ${swcState ? '(Active)' : '(Inactive)'}`}</Caption2>
                 <Divider />
                 <ToggleSwitch
-                  theme={theme}
                   backgroundColor={theme.colors.medium}
                   defaultColor={theme.colors.theme[themeColor].default}
                   activeColor={theme.colors.theme[themeColor].active}>
@@ -692,7 +726,7 @@ const Settings = () => {
           </>
         }
 
-        {settingPage === 2 &&
+        {settingPage === 'interface' &&
           <>
             {renderSetting("dash_topbar", currentSettings)}
             {renderSetting("dash_classic", currentSettings)}
@@ -711,20 +745,21 @@ const Settings = () => {
           </>
         }
 
-        {settingPage === 3 &&
+        {settingPage === 'keymap' &&
           <>
             {renderSetting("app_bindings", currentSettings)}
             {renderSetting("dongle_bindings", currentSettings)}
           </>
         }
 
-        {settingPage === 4 &&
-          <>
+        {/* TODO Fix box name showing CAN sensor config */}
+        {settingPage === 'dongle' &&
+          <> 
             {renderSetting("dongle_config", currentSettings)}
           </>
         }
 
-        {settingPage === 5 &&
+        {settingPage === 'system' &&
           <>
             <div style={{ display: 'flex', width: '100%', height: '90%', gap: '10px', justifyContent: 'center' }}>
               <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', gap: '10px' }}>
@@ -743,7 +778,7 @@ const Settings = () => {
           </>
         }
 
-        {settingPage === 6 &&
+        {settingPage === 'display' &&
           <>
             {renderSetting("screen", currentSettings)}
             <Element>
@@ -752,13 +787,12 @@ const Settings = () => {
             {renderSetting("daylight_backlight", currentSettings)}
             {renderSetting("auto_backlight", currentSettings)}
             {renderSetting("darkness_backlight", currentSettings)}
-            
+
             {settings.constants.modules.rti &&
               <Element>
                 <Caption2>{`RTI ${rtiState ? '(Active)' : '(Inactive)'}`}</Caption2>
                 <Divider />
                 <ToggleSwitch
-                  theme={theme}
                   backgroundColor={theme.colors.medium}
                   defaultColor={theme.colors.theme[themeColor].default}
                   activeColor={theme.colors.theme[themeColor].active}>
@@ -771,14 +805,14 @@ const Settings = () => {
           </>
         }
 
-        {settingPage === 7 &&
+        {settingPage === 'rearcam' &&
           <>
            {renderSetting("reverseCam", currentSettings)}
             <p />
           </>
         }
 
-        {settingPage === 8 &&
+        {settingPage === 'diagnostics' &&
           <>
             <Element>
               <Title>Diagnostics</Title>
@@ -854,7 +888,7 @@ const Settings = () => {
         }
 
       </ScrollContainer>
-      <Button theme={theme} onClick={() => { saveSettings() }} isActive={save ? false : true}>
+      <Button onClick={() => { saveSettings() }}>
         {save ? 'All Settings saved.' : 'Save Settings'}
       </Button>
     </Container>

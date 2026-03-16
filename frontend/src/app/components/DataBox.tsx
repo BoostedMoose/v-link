@@ -1,8 +1,20 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import styled, { useTheme } from 'styled-components';
 
-import { DATA, APP } from '../../store/Store';
-import { CustomIcon } from '../../theme/styles/Icons';
+import { DATA, APP, ModuleState, useThemeColor, ThemeColorKey } from '@/store/Store';
+import { CustomIcon } from '@/theme/styles/Icons';
+
+type SettingValue<T> = { value: T };
+type SensorSetting = { value: string; type: string };
+type DashClassicSettings = {
+    value_1: SensorSetting;
+    value_2: SensorSetting;
+    message_data: SensorSetting;
+    message_threshold: SettingValue<number>;
+    message_text: SettingValue<string>;
+    message_option: SettingValue<string>;
+};
+type SensorConfig = { app_id?: string | null; limit_start?: number };
 
 const Container = styled.div`
   width: 100%;
@@ -55,31 +67,36 @@ const DataBox = () => {
     const data = DATA((state) => state.data);
     const modules = APP((state) => state.modules);
 
+    const dash_classic = APP((state) => state.settings.dash_classic as DashClassicSettings | undefined);
+    const themeColor = useThemeColor();
 
-    const dash_classic = APP((state) => state.settings.dash_classic);
-    const themeColor = APP((state) => state.settings.general.colorTheme.value).toLowerCase();
-
-
-    // Extract settings
-    const leftName = dash_classic.value_1.value;
-    const leftType = dash_classic.value_1.type;
-    const rightName = dash_classic.value_2.value;
-    const rightType = dash_classic.value_2.type;
-    const centerName = dash_classic.message_data.value;
-    const centerType = dash_classic.message_data.type;
-
+    // Extract settings (null-safe — settings may not be loaded yet)
+    const leftName = dash_classic?.value_1.value ?? '';
+    const leftType = dash_classic?.value_1.type;
+    const rightName = dash_classic?.value_2.value ?? '';
+    const rightType = dash_classic?.value_2.type;
+    const centerName = dash_classic?.message_data.value ?? '';
+    const centerType = dash_classic?.message_data.type;
 
     const padding = 20;
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const { width, height } = dimensions;
 
-    const getSensorConfig = (modules, type, name) => {
+    const getSensorConfig = (
+        moduleMap: Record<string, unknown>,
+        type: string | undefined,
+        name: string | undefined,
+    ): SensorConfig => {
         if (!type) return {}; // empty type → return empty object
-        const selector = modules[type];
+        const selector = moduleMap[type] as
+            | ((select: (s: ModuleState) => unknown) => unknown)
+            | undefined;
         if (!selector) return {};
-        const sensor = selector((state) => state.settings.sensors[name]);
-        return sensor && typeof sensor === "object" ? sensor : {};
+        const sensor = selector((state: ModuleState) =>
+            (state.settings.sensors as Record<string, unknown> | undefined)?.[name ?? '']
+        );
+        return sensor && typeof sensor === 'object' ? (sensor as SensorConfig) : {};
     };
 
     const leftSensorConfig = getSensorConfig(modules, leftType, leftName);
@@ -91,23 +108,23 @@ const DataBox = () => {
         return {
             left: {
                 name: leftName,
-                data: data[leftName] ?? "N/A",
+                data: data[leftName] ?? 'N/A',
                 id: leftSensorConfig.app_id ?? null,
                 limit: leftSensorConfig.limit_start ?? Infinity,
             },
             right: {
                 name: rightName,
-                data: data[rightName] ?? "N/A",
+                data: data[rightName] ?? 'N/A',
                 id: rightSensorConfig.app_id ?? null,
                 limit: rightSensorConfig.limit_start ?? Infinity,
             },
             center: {
                 name: centerName,
-                data: data[centerName] ?? "N/A",
+                data: data[centerName] ?? 'N/A',
                 id: centerSensorConfig.app_id ?? null,
-                limit: dash_classic.message_threshold.value ?? Infinity,
-                msg: dash_classic.message_text.value ?? "No Message",
-                operator: dash_classic.message_option.value ?? "=",
+                limit: dash_classic?.message_threshold.value ?? Infinity,
+                msg: dash_classic?.message_text.value ?? 'No Message',
+                operator: dash_classic?.message_option.value ?? '=',
             },
         };
     }, [
@@ -118,23 +135,24 @@ const DataBox = () => {
         centerName,
         centerSensorConfig,
         data,
-        dash_classic.message_threshold.value,
-        dash_classic.message_text.value,
-        dash_classic.message_option.value,
+        dash_classic?.message_threshold.value,
+        dash_classic?.message_text.value,
+        dash_classic?.message_option.value,
     ]);
 
     const { customMsg, toggle } = useMemo(() => {
         const { data: centerData, limit, msg, operator } = dashData.center;
+        const numericData = centerData as number;
         let message = 'No Messages';
         let active = false;
 
-        if (operator === '>' && centerData > limit) {
+        if (operator === '>' && numericData > limit) {
             message = msg;
             active = true;
-        } else if (operator === '<' && centerData < limit) {
+        } else if (operator === '<' && numericData < limit) {
             message = msg;
             active = true;
-        } else if (operator === '=' && centerData === limit) {
+        } else if (operator === '=' && numericData === limit) {
             message = msg;
             active = true;
         }
@@ -183,8 +201,8 @@ const DataBox = () => {
             <Icons>
                 <CustomIcon
                     stroke={2}
-                    size={'25px'}
-                    isActive={dashData.left.data > dashData.left.limit}
+                    size={25}
+                    isActive={(dashData.left.data as number) > dashData.left.limit}
                     activeColor={themeColors.activeColor}
                     defaultColor={themeColors.defaultColor}
                     inactiveColor={themeColors.inactiveColor}
@@ -200,15 +218,15 @@ const DataBox = () => {
                 <CustomIcon
                     color={toggle ? themeColors.blueHighlight : themeColors.inactiveColor}
                     stroke={2}
-                    size={'40px'}
+                    size={40}
                 >
                     <use xlinkHref={`/assets/svg/icons/data/${'err'}.svg#${'err'}`} />
                 </CustomIcon>
 
                 <CustomIcon
                     stroke={2}
-                    size={'25px'}
-                    isActive={dashData.right.data > dashData.right.limit}
+                    size={25}
+                    isActive={(dashData.right.data as number) > dashData.right.limit}
                     activeColor={themeColors.activeColor}
                     defaultColor={themeColors.defaultColor}
                     inactiveColor={themeColors.inactiveColor}
@@ -253,7 +271,7 @@ const DataBox = () => {
                             fontWeight={theme.typography.caption2.fontWeight}
                             fill={themeColors.defaultColor}
                         >
-                            {dashData.left.data}
+                            {dashData.left.data as React.ReactNode}
                         </text>
 
                         <text
@@ -279,7 +297,7 @@ const DataBox = () => {
                             fontWeight={theme.typography.caption2.fontWeight}
                             fill={themeColors.defaultColor}
                         >
-                            {dashData.right.data}
+                            {dashData.right.data as React.ReactNode}
                         </text>
                     </Svg>
                 )}

@@ -1,8 +1,8 @@
 import styled, { useTheme } from 'styled-components';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
-import { DATA, APP } from '../../store/Store';
-import { Display3, Typography } from '../../theme/styles/Typography';
+import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
+import { Display3, Typography } from '@/theme/styles/Typography';
 
 // Styled container for the gauge
 const Container = styled.div`
@@ -51,9 +51,19 @@ const Custom = styled.div`
     align-items: center;
 `;
 
+type ModuleSelector = ((select: (s: ModuleState) => unknown) => unknown) | undefined;
+
+type SensorConfig = { unit?: string; max_value?: number; min_value?: number; limit_start?: number };
+
+type DashRaceSettings = {
+    gauge_1: { value: string; type: string };
+    gauge_2: { value: string; type: string };
+    gauge_3: { value: string; type: string };
+};
+
 // Helper function to format numbers to single decimal magnitude
-const formatToSingleDecimal = (number) => {
-    if (number === 0) return "0";
+const formatToSingleDecimal = (number: number): number => {
+    if (number === 0) return 0;
     const magnitude = Math.floor(Math.log10(Math.abs(number)));
     const divisor = Math.pow(10, magnitude);
     return Math.floor(number / divisor);
@@ -61,32 +71,32 @@ const formatToSingleDecimal = (number) => {
 
 const LinearGauge = () => {
     const theme = useTheme();
-    const containerRef = useRef(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     const data = DATA((state) => state.data);
-    
-    const settings = APP((state) => state.settings.dash_race);
-    const themeColor = APP((state) => state.settings.general.colorTheme.value).toLowerCase();   
+
+    const settings = APP((state) => state.settings.dash_race) as DashRaceSettings | undefined;
+    const themeColor = useThemeColor();
 
     // Extract gauge settings at top level
-    const progressName = settings.gauge_1.value;
-    const progressType = settings.gauge_1.type;
-    const topLeftName = settings.gauge_2.value;
-    const topLeftType = settings.gauge_2.type;
-    const centerName = settings.gauge_3.value;
-    const centerType = settings.gauge_3.type;
+    const progressName = settings?.gauge_1.value ?? '';
+    const progressType = settings?.gauge_1.type ?? '';
+    const topLeftName = settings?.gauge_2.value ?? '';
+    const topLeftType = settings?.gauge_2.type ?? '';
+    const centerName = settings?.gauge_3.value ?? '';
+    const centerType = settings?.gauge_3.type ?? '';
 
     // Helper to safely get sensor config
-    const getSensorConfig = (moduleSelector, sensorName) => {
+    const getSensorConfig = (moduleSelector: ModuleSelector, sensorName: string | undefined): SensorConfig => {
         if (!moduleSelector || !sensorName) return {};
-        const sensor = moduleSelector((state) => state.settings.sensors[sensorName]);
-        return (sensor && typeof sensor === 'object') ? sensor : {};
+        const sensor = (moduleSelector as (select: (s: ModuleState) => unknown) => unknown)((state) => (state.settings.sensors as Record<string, unknown> | undefined)?.[sensorName]);
+        return (sensor && typeof sensor === 'object') ? sensor as SensorConfig : {};
     };
 
     // Get modules selector functions
-    const progressModuleSelector = APP((state) => state.modules[progressType]);
-    const topLeftModuleSelector = APP((state) => state.modules[topLeftType]);
-    const centerModuleSelector = APP((state) => state.modules[centerType]);
+    const progressModuleSelector = APP((state) => state.modules[progressType] as ModuleSelector);
+    const topLeftModuleSelector = APP((state) => state.modules[topLeftType] as ModuleSelector);
+    const centerModuleSelector = APP((state) => state.modules[centerType] as ModuleSelector);
 
     // Use safe lookup
     const progressSensorConfig = getSensorConfig(progressModuleSelector, progressName);
@@ -99,18 +109,18 @@ const LinearGauge = () => {
             progress: {
                 name: progressName,
                 type: progressType,
-                value: data[progressName] ?? 0,
+                value: (data[progressName] ?? 0) as number,
                 unit: progressSensorConfig.unit ?? 'N/A',
                 maxValue: progressSensorConfig.max_value ?? 100,
                 limitStart: progressSensorConfig.limit_start ?? 80,
                 minValue: progressSensorConfig.min_value ?? 0,
             },
             topLeft: {
-                value: data[topLeftName] ?? 0,
+                value: (data[topLeftName] ?? 0) as number,
                 unit: topLeftSensorConfig.unit ?? 'N/A',
             },
             center: {
-                value: data[centerName] ?? 0,
+                value: (data[centerName] ?? 0) as number,
                 unit: centerSensorConfig.unit ?? 'N/A',
             }
         };
@@ -132,10 +142,10 @@ const LinearGauge = () => {
     const { width, height } = dimensions;
 
     // State variables for SVG content and rendering
-    const [svg, setSVG] = useState(null);
+    const [svg, setSVG] = useState<Document | null>(null);
     const [viewBox, setViewBox] = useState({ minX: 0, minY: 0, width: 0, height: 0 });
-    const [bar, setBar] = useState(null);
-    const [spline, setSpline] = useState(null);
+    const [bar, setBar] = useState<SVGGeometryElement | null>(null);
+    const [spline, setSpline] = useState<SVGGeometryElement | null>(null);
     const [ready, setReady] = useState(false);
 
     // Configuration constants
@@ -194,14 +204,16 @@ const LinearGauge = () => {
     useEffect(() => {
         if (svg) {
             const svgElement = svg.querySelector('svg');
-            const viewBoxAttr = svgElement.getAttribute('viewBox');
-            if (viewBoxAttr) {
-                const [minX, minY, width, height] = viewBoxAttr.split(' ').map(Number);
-                setViewBox({ minX, minY, width, height });
+            if (svgElement) {
+                const viewBoxAttr = svgElement.getAttribute('viewBox');
+                if (viewBoxAttr) {
+                    const [minX, minY, width, height] = viewBoxAttr.split(' ').map(Number);
+                    setViewBox({ minX, minY, width, height });
+                }
             }
 
-            setSpline(svg.getElementById('spline'));
-            setBar(svg.getElementById('bar'));
+            setSpline(svg.getElementById('spline') as SVGGeometryElement | null);
+            setBar(svg.getElementById('bar') as SVGGeometryElement | null);
             setReady(true);
         }
     }, [svg]);
@@ -213,17 +225,17 @@ const LinearGauge = () => {
         const { maxValue, limitStart, minValue } = gaugeData.progress;
         const pathLength = spline.getTotalLength();
 
-        const calculatePositions = (markerEnd) => {
+        const calculatePositions = (markerEnd: number) => {
             const numIntervals = formatToSingleDecimal(markerEnd) - formatToSingleDecimal(minValue) + 1;
             const actualIntervals = numIntervals > 0 ? numIntervals : 1;
             const positions = [];
-            
+
             const limitLength = pathLength * (markerEnd / maxValue);
             const intervalLength = actualIntervals > 1 ? limitLength / (actualIntervals - 1) : limitLength;
 
             for (let i = 0; i < actualIntervals; i++) {
                 const lengthAtInterval = intervalLength * i;
-                const adjustedPoint = reverseMarkers 
+                const adjustedPoint = reverseMarkers
                     ? spline.getPointAtLength(pathLength - lengthAtInterval)
                     : spline.getPointAtLength(lengthAtInterval);
                 positions.push(adjustedPoint);
@@ -239,7 +251,7 @@ const LinearGauge = () => {
 
     // Memoize gradient generators
     const gradientGenerators = useMemo(() => ({
-        gradientDefault: (id, adjustedX) => (
+        gradientDefault: (id: string, adjustedX: number) => (
             <linearGradient key={id} id={id} x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop
                     offset="0%"
@@ -259,7 +271,7 @@ const LinearGauge = () => {
             </linearGradient>
         ),
 
-        gradientLight: (id, adjustedX) => (
+        gradientLight: (id: string, adjustedX: number) => (
             <linearGradient key={id} id={id} x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop
                     offset="0%"
@@ -279,7 +291,7 @@ const LinearGauge = () => {
             </linearGradient>
         ),
 
-        gradientValue: (id, adjustedX) => (
+        gradientValue: (id: string, adjustedX: number) => (
             <linearGradient key={id} id={id} x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop
                     offset="0%"
@@ -309,7 +321,7 @@ const LinearGauge = () => {
             </linearGradient>
         ),
 
-        gradientLimit: (id, value1, value2, color) => (
+        gradientLimit: (id: string, value1: number, value2: number, color: string) => (
             <linearGradient key={id} id={id} x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop
                     offset={`${((value1 - 1) / (width - padding * 2)) * 100}%`}
@@ -342,8 +354,8 @@ const LinearGauge = () => {
         const { maxValue, limitStart, value: progressValue } = gaugeData.progress;
         const { limitPositions, maxPositions } = markerCalculations;
 
-        const barPath = bar.getAttribute('d');
-        const splinePath = spline.getAttribute('d');
+        const barPath = bar.getAttribute('d') ?? undefined;
+        const splinePath = spline.getAttribute('d') ?? undefined;
 
         const renderBar = () => {
             if (limitPositions.length === 0) return null;

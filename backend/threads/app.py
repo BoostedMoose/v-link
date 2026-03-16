@@ -69,19 +69,19 @@ class APPThread(threading.Thread):
             '--no-first-run',
             '--no-default-browser-check'
             '--allow-insecure-localhost',
+            '--ozone-platform=wayland',
             '--unsafely-treat-insecure-origin-as-secure=http://localhost:4001,http://localhost:5173'
         ]
 
         if shared_state.isKiosk:
             mode = [
                 '--kiosk',
-                '--ozone-platform=wayland',
                 '--start-maximized'
             ]
         else:
             mode = [
                 '--disable-resize',
-                '--window-size=800,480'
+                '--window-size=1280,720'
             ]
 
         flags = standard_flags + mode

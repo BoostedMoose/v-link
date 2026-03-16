@@ -95,8 +95,10 @@ export class WebGLRenderer implements FrameRenderer {
   }
 
   draw(frame: VideoFrame): void {
-    if (this.#canvas) {
-      this.#canvas.width = frame.displayWidth
+    if (this.#canvas &&
+        (this.#canvas.width !== frame.displayWidth ||
+         this.#canvas.height !== frame.displayHeight)) {
+      this.#canvas.width  = frame.displayWidth
       this.#canvas.height = frame.displayHeight
     }
 

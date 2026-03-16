@@ -1,22 +1,26 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { CARWorker } from './worker/types'
-import { DATA } from './../store/Store';
-import { APP } from './../store/Store';
+import { DATA } from '@/store/Store';
+import { APP } from '@/store/Store';
 
 import Display from './helper/Display';
 import Ignition from './helper/Ignition';
 import Recorder from './helper/Recorder';
 
+type ScreenSettings = { autoOpen: { value: boolean } };
+type ShutdownSettings = { autoShutdown: { value: boolean }; shutdownDelay: { value: number }; messageTimeout: { value: number } };
+type DashChartsSettings = { resolution: { value: number } };
+
 function Cardata() {
   const settings       = APP((state) => state.settings)
   const modules        = APP((state) => state.modules)
-  const autoOpen       = APP((state) => state.settings.screen.autoOpen.value)
+  const autoOpen       = APP((state) => (state.settings.screen as ScreenSettings | undefined)?.autoOpen?.value ?? false)
   const ignState       = APP((state) => state.system.ignState)
-  const autoShutdown   = APP((state) => state.settings.shutdown.autoShutdown.value)
-  const shutdownDelay  = APP((state) => state.settings.shutdown.shutdownDelay.value)
-  const messageTimeout = APP((state) => state.settings.shutdown.messageTimeout.value)
+  const autoShutdown   = APP((state) => (state.settings.shutdown as ShutdownSettings | undefined)?.autoShutdown?.value ?? false)
+  const shutdownDelay  = APP((state) => (state.settings.shutdown as ShutdownSettings | undefined)?.shutdownDelay?.value ?? 0)
+  const messageTimeout = APP((state) => (state.settings.shutdown as ShutdownSettings | undefined)?.messageTimeout?.value ?? 0)
   const isRecording    = APP((state) => state.system.isRecording)
-  const resolution     = APP((state) => state.settings.dash_charts.resolution.value)
+  const resolution     = APP((state) => (state.settings.dash_charts as DashChartsSettings | undefined)?.resolution?.value ?? 100)
 
 
 
@@ -82,7 +86,7 @@ function Cardata() {
         updateApp={updateApp}
       />
       <Recorder
-        data={data.data}
+        data={data.data as Record<string, string | number>}
         resolution={resolution}
         recording={isRecording}
         settings={settings}

@@ -4,7 +4,7 @@
  * These run in jsdom without any React rendering — pure store state operations.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { APP, CAN, DATA } from '../store/Store';
+import { APP, CAN, DATA } from '@/store/Store';
 
 const appStore = APP as any;
 const canStore = CAN as any;

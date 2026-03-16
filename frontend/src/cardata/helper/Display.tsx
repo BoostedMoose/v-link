@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNamespaces } from '../../socket/Namespaces';
+import { useNamespaces } from '@/socket/Namespaces';
 const socket = useNamespaces();
 
 interface DisplayProps {

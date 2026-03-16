@@ -1,31 +1,11 @@
-import { useState, useEffect, useRef, use } from 'react';
-import { APP, modules } from '../store/Store';
+import { useState, useEffect, useRef } from 'react';
+import { APP, modules } from '@/store/Store';
 import { useNamespaces } from './Namespaces';
-import { scryptSync } from 'crypto';
 
-
-const socket = useNamespaces
-
-// System channel (ignition, reverse,  etc.)
-// LOG de sanity: ver TODO lo que llega por /sys
-//sysChannel.onAny((event, ...args) => console.log('[SYS]', event, ...args));
-
-// (opcional) log específico del evento reverse
-//socket.sys.on('reverse', (v: boolean) => console.log('[SYS reverse]', v));
-
-// Specific channel to handle rearcam power (energía GPIO + estado)
-const rearcamChannel = socket.can;
-
-// Helpers for Rearcam
-export const rearcam = {  
-  mount: () => socket.cam.emit('mount'),
-  unmount: () => socket.cam.emit('unmount'),
-  status: () => socket.cam.emit('status'),
-};
 
 export const Socket = () => {
   const [appConfigLoaded, setAppConfigLoaded] = useState(false);
-  const [activeModules, setActiveModules] = useState({});
+  const [activeModules, setActiveModules] = useState<Record<string, unknown>>({});
   const [loadedModules, setLoadedModules] = useState(0);
   const loadedModuleSet = useRef(new Set());
   const listenersSetup = useRef(false);
@@ -35,26 +15,26 @@ export const Socket = () => {
 
   // Initialize all Zustand stores (we'll filter active ones later)
   const allStores = Object.fromEntries(
-    Object.entries(modules).map(([key, useStore]) => [key, useStore()])
-  ) as Record<string, ReturnType<typeof APP>>;
+    Object.entries(modules).map(([key, useStore]) => [key, (useStore as () => { update: (updater: (state: any) => void) => void })()])
+  ) as Record<string, { update: (updater: (state: any) => void) => void }>;
 
   // Reusable event handlers
-  const handleSettings = (module) => (data) => {
+  const handleSettings = (module: string) => (data: unknown) => {
     if (data) {
       if (module === 'app') {
         // Special handling for app settings to determine active modules
         setAppConfigLoaded(true);
-        
+
         // Determine which modules should be active based on app config
-        const moduleConfig = data.constants?.modules || {};
-        const modulesToActivate = { app: APP }; // Always include app
-        
+        const moduleConfig = (data as any)?.constants?.modules || {};
+        const modulesToActivate: Record<string, unknown> = { app: APP }; // Always include app
+
         Object.entries(moduleConfig).forEach(([moduleName, isEnabled]) => {
-          if (isEnabled && modules[moduleName]) {
-            modulesToActivate[moduleName] = modules[moduleName];
+          if (isEnabled && (modules as Record<string, unknown>)[moduleName]) {
+            modulesToActivate[moduleName] = (modules as Record<string, unknown>)[moduleName];
           }
         });
-        
+
         setActiveModules(modulesToActivate);
       }
 
@@ -70,47 +50,47 @@ export const Socket = () => {
     }
   };
 
-  const handleIgnition = (ignStatus) => {
+  const handleIgnition = (ignStatus: boolean) => {
     allStores['app'].update((state) => {
       state.system.ignState = ignStatus;
     });
   };
 
-  const handleState = (module) => (data) => {
+  const handleState = (module: string) => (data: unknown) => {
     allStores['app'].update((state) => {
       state.system[`${module}State`] = data;
     });
   };
 
-  const handleConnect = (socketName) => () => {
+  const handleConnect = (socketName: string) => () => {
     socket.log.emit('info', `${socketName} socket connected`);
   };
 
-  const handleDisconnect = (socketName) => (reason) => {
+  const handleDisconnect = (socketName: string) => (reason: string) => {
     socket.log.emit('info', `${socketName} socket disconnected: ${reason}`);
   };
 
-  const handleError = (socketName) => (error) => {
+  const handleError = (socketName: string) => (error: unknown) => {
     socket.log.emit('error', `${socketName} socket connection error: ${error}`);
   };
 
 
   const handleReverse = () => (reverseStatus: boolean) => {
     socket.log.emit('info', `Reverse: ${reverseStatus}`);
-    store['app'].update((state: any) => {
+    allStores['app'].update((state: any) => {
       state.system.reverse = reverseStatus;
     });
   };
-  
+
   const handleRearcamCameraStatus = (payload: { on: boolean; error?: string }) => {
-    store['app'].update((state: any) => {
+    allStores['app'].update((state: any) => {
       state.system.rearcam = !!payload.on;
       state.system.rearcamError = payload.error || null;
     });
   };
 
   const handleRearcamState = (on: boolean) => {
-    store['app'].update((state: any) => {
+    allStores['app'].update((state: any) => {
       state.system.rearcam = !!on;
     });
   };

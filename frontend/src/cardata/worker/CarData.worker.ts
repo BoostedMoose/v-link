@@ -1,12 +1,13 @@
-import { useNamespaces } from "../../socket/Namespaces";
+import { useNamespaces } from "@/socket/Namespaces";
 const socket = useNamespaces();
 
+type LatestData = { values: unknown; timestamp: number } | null;
 
-let settings;
-let latestData = null
+let settings: unknown;
+let latestData: LatestData = null
 
 // Function to handle incoming canbus settings
-const handlesensorSettings = (data) => {
+const handlesensorSettings = (data: { sensors?: unknown }) => {
     settings = data.sensors;
 };
 
@@ -16,7 +17,7 @@ socket.can.on("settings", handlesensorSettings);
 // Listen for adc settings
 socket.adc.on("settings", handlesensorSettings);
 
-socket.data.on("data", (data) => {
+socket.data.on("data", (data: { timestamp?: number; data?: unknown }) => {
   if (data && typeof data.timestamp === 'number' && data.data) {
     latestData = { values: data.data, timestamp: Date.now() }
   }

@@ -1,5 +1,5 @@
 // Utility function to convert hex to rgba
-const hexToRgba = (hex, alpha) => {
+const hexToRgba = (hex: string, alpha: number) => {
     let r = 0, g = 0, b = 0;
   
     // Expand shorthand hex like "#fff" to full form "#ffffff"

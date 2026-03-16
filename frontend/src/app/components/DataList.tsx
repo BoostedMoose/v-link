@@ -1,7 +1,7 @@
 import styled, { useTheme } from 'styled-components';
-import { DATA, APP } from '../../store/Store';
-import { Typography } from '../../theme/styles/Typography';
-import { CustomIcon } from '../../theme/styles/Icons';
+import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
+import { Typography } from '@/theme/styles/Typography';
+import { CustomIcon } from '@/theme/styles/Icons';
 
 
 
@@ -61,12 +61,15 @@ const Element = styled.div`
   margin-bottom: 7px;
 `
 
-const DataList = (dashPage, itemCount, columns) => {
+type DashPageSettings = Record<string, { value: string; type: string }>;
+type SensorConfig = { label?: string; unit?: string; limit_start?: number };
+
+const DataList = (dashPage: DashPageSettings, itemCount: number, columns: number) => {
     const theme = useTheme();
 
     const data = DATA((state) => state.data);
     const modules = APP((state) => state.modules);
-    const colorTheme = APP((state) => state.settings.general.colorTheme.value).toLowerCase();
+    const colorTheme = useThemeColor();
 
     const Body1 = Typography.Body1;
 
@@ -74,7 +77,7 @@ const DataList = (dashPage, itemCount, columns) => {
     const columnsToUse = itemCount === 1 ? 1 : columns; // Use 1 column if there's only one value
     const rowsPerColumn = Math.ceil(itemCount / columnsToUse); // Calculate rows per column dynamically
 
-    const lists = Array.from({ length: columnsToUse }, () => []); // Create empty arrays based on the number of columns
+    const lists = Array.from({ length: columnsToUse }, (): number[] => []); // Create empty arrays based on the number of columns
 
     // Distribute the boxes into the appropriate number of lists
     for (let i = 0; i < itemCount; i++) {
@@ -96,19 +99,24 @@ const DataList = (dashPage, itemCount, columns) => {
                 const dataName = dashPage[`value_${boxIndex + 1}`].value;
                 const dataType = dashPage[`value_${boxIndex + 1}`].type;
 
-                let sensor = {};
+                let sensor: SensorConfig = {};
 
                 // safely fetch the sensor config
                 if (dataType != "") {
-                    sensor = modules[dataType](
-                        (state) => state.settings.sensors[dataName]
-                    ) || {};  // <- fallback to empty object if "" or undefined
+                    const moduleSelector = modules[dataType] as
+                        | ((select: (s: ModuleState) => unknown) => unknown)
+                        | undefined;
+                    sensor = (moduleSelector?.(
+                        (state: ModuleState) =>
+                            (state.settings.sensors as Record<string, unknown> | undefined)?.[dataName]
+                    ) as SensorConfig | undefined) ?? {};
                 }
 
                 const dataLabel = sensor.label ?? "N/A";
                 const dataUnit = sensor.unit ?? "";
                 const dataLimit = sensor.limit_start ?? Infinity;
-                const dataValue = data[dataName] ?? "N/A";
+                const dataValue = (data[dataName] ?? "N/A") as string | number;
+                const numericValue = data[dataName] as number;
 
                 const valueBox = (
                     <Svg key={`value_${boxIndex + 1}`} viewBox={`0 0 ${theme.interaction.buttonWidth} 30`}>
@@ -132,13 +140,13 @@ const DataList = (dashPage, itemCount, columns) => {
                             ry="12"
                             fill="rgba(0, 0, 0, 0.2)"
                             stroke={
-                                dataValue > dataLimit
+                                numericValue > dataLimit
                                     ? "url(#fadeLimit)"
                                     : "url(#fadeBorder)"
                             }
-                            strokeWidth={dataValue > dataLimit ? 2 : 1}
+                            strokeWidth={numericValue > dataLimit ? 2 : 1}
                         />
-                        {dataValue > dataLimit && (
+                        {numericValue > dataLimit && (
                             <use
                                 href={`/assets/svg/icons/data/${'err'}.svg#${'err'}`}
                                 x="10"
@@ -169,7 +177,7 @@ const DataList = (dashPage, itemCount, columns) => {
                     <span
                         style={{
                             color:
-                                dataValue > dataLimit
+                                numericValue > dataLimit
                                     ? theme.colors.theme[colorTheme].highlightDark
                                     : theme.colors.light,
                         }}
@@ -181,7 +189,7 @@ const DataList = (dashPage, itemCount, columns) => {
                 const divider = (
                     <Divider
                         color={
-                            dataValue > dataLimit
+                            numericValue > dataLimit
                                 ? theme.colors.theme[colorTheme].highlightDark
                                 : theme.colors.medium
                         }

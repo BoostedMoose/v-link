@@ -1,7 +1,94 @@
 import { create } from 'zustand';
 import {immer} from 'zustand/middleware/immer'
+import type { ReactNode } from 'react'
 
-const APP = create(
+interface SizeState {
+  width: number;
+  height: number;
+}
+
+interface CarplayState {
+  dongle: boolean;
+  phone: boolean;
+  stream: boolean;
+  user: boolean;
+  worker: boolean;
+  fullscreen: boolean;
+  paired: boolean;
+  connected: boolean;
+  pair?: boolean;
+}
+
+interface InterfaceState {
+  topBar: boolean;
+  navBar: boolean;
+  sideBar: boolean;
+  content: boolean;
+  carplay: boolean;
+}
+
+interface ModalState {
+  visible: boolean;
+  title: string | null;
+  content: ReactNode;
+  exit?: boolean | null;
+}
+
+interface SystemState {
+  version: string;
+  view: string;
+  switch: string;
+  lastUpdate: number;
+  firstStart: boolean;
+  settingPage: string;
+  configLoaded: boolean;
+  initialized: boolean;
+  startedUp: boolean;
+  isRecording: boolean;
+  windowSize: SizeState;
+  contentSize: SizeState;
+  carplaySize: SizeState;
+  carplay: CarplayState;
+  interface: InterfaceState;
+  modal: ModalState;
+  wifiState: boolean;
+  btState: boolean;
+  canState: boolean;
+  adcState: boolean;
+  swcState: boolean;
+  rtiState: boolean;
+  ignState: boolean;
+  // Set at runtime via Socket.tsx
+  reverse?: boolean;
+  rearcam?: boolean;
+  rearcamError?: string | null;
+}
+
+export interface AppState {
+  modules: Record<string, unknown>;
+  settings: Record<string, unknown>;
+  system: SystemState;
+  update: (updater: (state: AppState) => void) => void;
+  keyStroke: string;
+  setKeyStroke: (key: string) => void;
+  switchPage: string;
+  setSwitchPage: (key: string) => void;
+  pauseKeyBinds: boolean;
+  setPauseKeyBinds: (paused: boolean) => void;
+}
+
+export interface ModuleState {
+  system: { state: boolean };
+  settings: Record<string, unknown>;
+  update: (updater: (state: ModuleState) => void) => void;
+}
+
+export interface DataState {
+  data: Record<string, unknown>;
+  update: (newData: Record<string, unknown>) => void;
+}
+
+const APP = create<AppState>()(
   immer((set) => ({
     modules: {},
     settings: {},
@@ -12,7 +99,7 @@ const APP = create(
       lastUpdate: 0,
 
       firstStart: true,
-      settingPage: 1,
+      settingPage: 'general',
 
       configLoaded: false,
       initialized: false,
@@ -104,7 +191,7 @@ const APP = create(
   }))
 );
 
-const CAN = create(
+const CAN = create<ModuleState>()(
   immer((set) => ({
     system: {
       state: false,
@@ -114,7 +201,7 @@ const CAN = create(
   }))
 );
 
-const SWC = create(
+const SWC = create<ModuleState>()(
   immer((set) => ({
     system: {
       state: false,
@@ -124,7 +211,7 @@ const SWC = create(
   }))
 );
 
-const ADC = create(
+const ADC = create<ModuleState>()(
   immer((set) => ({
     system: {
       state: false,
@@ -134,7 +221,7 @@ const ADC = create(
   }))
 );
 
-const RTI = create(
+const RTI = create<ModuleState>()(
   immer((set) => ({
     system: {
       state: false,
@@ -144,7 +231,7 @@ const RTI = create(
   }))
 );
 
-const DATA = create(
+const DATA = create<DataState>()(
   immer((set) => ({
     data: {},
     update: (newData) =>
@@ -161,5 +248,15 @@ const modules = {
   adc: ADC,
   rti: RTI,
 }
+
+// theme color helper
+export type ThemeColorKey = 'green' | 'blue' | 'red' | 'white';
+
+type GeneralSettings = { colorTheme?: { value: string } };
+
+export const useThemeColor = (): ThemeColorKey =>
+    (APP((state) =>
+        (state.settings.general as GeneralSettings | undefined)?.colorTheme?.value ?? 'blue'
+    ) as string).toLowerCase() as ThemeColorKey;
 
 export { APP, CAN, SWC, ADC, RTI, DATA, modules };

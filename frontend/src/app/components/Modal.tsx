@@ -1,11 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom';
 import styled from 'styled-components';
-import { Typography } from '../../theme/styles/Typography';
-import { Button } from '../../theme/styles/Inputs';
-import { APP } from '../../store/Store';
+import { Typography } from '@/theme/styles/Typography';
+import { Button } from '@/theme/styles/Inputs';
+import { APP } from '@/store/Store';
 
-const Overlay = styled.div`
+interface OverlayProps {
+  $visible: boolean;
+}
+
+interface ContentProps {
+  $visible: boolean;
+}
+
+const Overlay = styled.div<OverlayProps>`
   position: fixed;
   top: 0;
   left: 0;
@@ -22,7 +30,7 @@ const Overlay = styled.div`
   transition: opacity 0.3s ease-in-out;
 `;
 
-const Content = styled.div`
+const Content = styled.div<ContentProps>`
   background: #151515;
   padding: 30px;
   border-radius: 10px;
@@ -87,11 +95,11 @@ const Modal = () => {
         : null }
       </Content>
     </Overlay>,
-    document.getElementById('root')
+    document.getElementById('root')!
   );
 };
 
-const openModal = (title, body, button, action) => {
+const openModal = (title: string, body: React.ReactNode, button?: string, action?: () => void) => {
   const appUpdate = APP.getState().update;
 
 

@@ -2,10 +2,11 @@
 // MIT License
 import { getDecoderConfig, isKeyFrame } from './lib/utils'
 import { InitEvent, RenderEvent, WorkerEvent } from './RenderEvents'
+import { Canvas2DRenderer } from './Canvas2DRenderer'
 import { WebGL2Renderer } from './WebGL2Renderer'
 import { WebGLRenderer } from './WebGLRenderer'
 import { WebGPURenderer } from './WebGPURenderer'
-import { useNamespaces } from '../../../socket/Namespaces'
+import { useNamespaces } from '@/socket/Namespaces'
 
 export interface FrameRenderer {
   draw(data: VideoFrame): void
@@ -71,21 +72,27 @@ export class RenderWorker {
   })
 
   init = (event: InitEvent) => {
-    switch (event.renderer) {
-      case 'webgl':
-        this.renderer = new WebGLRenderer(event.canvas)
+    socket.log.emit('debug', `(CarPlay) Render worker init received, renderer: ${event.renderer}`)
+    const candidates: Array<[string, () => FrameRenderer]> = [
+      ['webgl',   () => new WebGLRenderer(event.canvas)],
+      ['webgl2',  () => new WebGL2Renderer(event.canvas)],
+      // ['webgpu',  () => new WebGPURenderer(event.canvas)],
+      ['canvas2d', () => new Canvas2DRenderer(event.canvas)],
+    ]
+    for (const [name, create] of candidates) {
+      try {
+        this.renderer = create()
+        socket.log.emit('debug', `(CarPlay) Renderer initialized: ${name}`)
         break
-      case 'webgl2':
-        this.renderer = new WebGL2Renderer(event.canvas)
-        break
-      case 'webgpu':
-        this.renderer = new WebGPURenderer(event.canvas)
-        break
+      } catch (e) {
+        socket.log.emit('error', `(CarPlay) Renderer init failed (${name}): ${e}`)
+      }
     }
     this.videoPort = event.videoPort
     this.videoPort.onmessage = ev => {
       this.onFrame(ev.data as RenderEvent)
     }
+    socket.log.emit('debug', '(CarPlay) Render worker videoPort ready')
 
     if (event.reportFps) {
       setInterval(() => {
@@ -96,15 +103,22 @@ export class RenderWorker {
     }
   }
 
+  private frameCount2 = 0
+
   onFrame = (event: RenderEvent) => {
+    this.frameCount2++
+    if (this.frameCount2 === 1) {
+      socket.log.emit('debug', `(CarPlay) First video frame received, decoder state: ${this.decoder.state}`)
+    }
     const frameData = new Uint8Array(event.frameData)
 
     if (this.decoder.state === 'unconfigured') {
       const decoderConfig = getDecoderConfig(frameData)
       if (decoderConfig) {
         this.decoder.configure(decoderConfig)
-        console.log(`(CarPlay) Decoder-config: ${decoderConfig}`);
-        socket.log.emit('debug', `(CarPlay) Decoder-config: ${decoderConfig}`)
+        const { codec, codedWidth, codedHeight } = decoderConfig
+        console.log(`(CarPlay) Decoder-config: codec=${codec} ${codedWidth}x${codedHeight}`);
+        socket.log.emit('debug', `(CarPlay) Decoder-config: codec=${codec} ${codedWidth}x${codedHeight}`)
 
 
         /* V-Link Mod */

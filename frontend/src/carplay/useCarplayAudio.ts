@@ -8,7 +8,7 @@ import {
 import { PcmPlayer } from 'pcm-ringbuf-player'
 import { AudioPlayerKey, CarPlayWorker } from './worker/types'
 import { createAudioPlayerKey } from './worker/utils'
-import { useNamespaces } from '../socket/Namespaces'
+import { useNamespaces } from '@/socket/Namespaces'
 
 //TODO: allow to configure
 const defaultAudioVolume = 1

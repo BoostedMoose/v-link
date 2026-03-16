@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import styled, { css, keyframes, useTheme } from 'styled-components';
-import { eventEmitter } from '../../../app/helper/EventEmitter';
-import { APP } from '../../../store/Store';
-import { Typography } from '../../../theme/styles/Typography';
-import { Link } from '../../../theme/styles/Inputs';
-import { CustomIcon } from '../../../theme/styles/Icons';
-import { useNamespaces } from '../../../socket/Namespaces';
+import { eventEmitter } from '@/app/helper/EventEmitter';
+import { APP, useThemeColor } from '@/store/Store';
+import { Typography } from '@/theme/styles/Typography';
+import { Link } from '@/theme/styles/Inputs';
+import { CustomIcon } from '@/theme/styles/Icons';
+import { useNamespaces } from '@/socket/Namespaces';
 
 // Keyframes for opening and closing the chainlink
 const openChainLeft = keyframes`
@@ -29,8 +29,12 @@ const closeChainRight = keyframes`
 `;
 
 
+interface SvgContainerProps {
+  connected?: boolean;
+}
+
 // Styled SVG container for animation
-const SvgContainer = styled.svg`
+const SvgContainer = styled.svg<SvgContainerProps>`
   width: 100px;
   height: auto;
 
@@ -67,7 +71,7 @@ function Carplay() {
     const theme = useTheme();
     const socket = useNamespaces();
     
-    const themeColor      = APP((state) => state.settings.general.colorTheme.value).toLowerCase()
+    const themeColor = useThemeColor();
     const carplaySettings = APP((state) => state.system.carplay);
     const appUpdate       = APP((state) => state.update);
     

@@ -1,10 +1,34 @@
-import { APP } from '../../store/Store';
-import { IconNav } from '../../theme/styles/Icons';
-import { GlowLarge } from '../../theme/styles/Effects';
+import { APP, useThemeColor } from '@/store/Store';
+import { IconNav } from '@/theme/styles/Icons';
+import { GlowLarge as GlowLargeBase } from '@/theme/styles/Effects';
 import styled, { css, useTheme } from 'styled-components';
+import React from 'react';
 
+const GlowLarge = GlowLargeBase as React.ComponentType<React.HTMLAttributes<HTMLDivElement> & { color?: string; opacity?: number }>;
 
-const Navbar = styled.div`
+type SideBarsSettings = { navBarHeight: { value: number }; topBarHeight: { value: number } };
+
+interface NavbarProps {
+  navBarHeight: number;
+  isActive: boolean;
+}
+
+interface IndicatorProps {
+  isActive: boolean;
+}
+
+interface BlobProps {
+  isActive: boolean;
+  isHovering: boolean;
+  activeColor: string;
+}
+
+interface NavBarProps {
+  isHovering: boolean;
+  swipeProgress?: number;
+}
+
+const Navbar = styled.div<NavbarProps>`
   position: absolute;
   bottom: 0;
   z-index: 3;
@@ -33,7 +57,7 @@ const NavButton = styled.button`
     }
 `;
 
-const Indicator = styled.div`
+const Indicator = styled.div<IndicatorProps>`
     position: absolute;
     bottom: 0;
     z-index: 3;
@@ -48,11 +72,11 @@ const Indicator = styled.div`
     border: none;
 `;
 
-const Blob = styled.div`
+const Blob = styled.div<BlobProps>`
     width: 100px;
     height: 3px;
-    background: ${({ theme, themeColor, isHovering }) => `${isHovering ? theme.colors.theme[themeColor].active : theme.colors.medium}`};
-    
+    background: ${({ theme, activeColor, isHovering }) => isHovering ? activeColor : theme.colors.medium};
+
     border-radius: 2.5px;
     border: none;
 
@@ -61,19 +85,22 @@ const Blob = styled.div`
 `;
 
 
-const NavBar = ({ isHovering }) => {
+const NavBar = ({ isHovering }: NavBarProps) => {
   const theme = useTheme();
+  const themeColor = useThemeColor();
 
   const appUpdate     = APP((state) => state.update);
   const isActive      = APP((state) => state.system.interface.navBar);
   const content       = APP((state) => state.system.interface.content);
   const currentView   = APP((state) => state.system.view);
-  const navBarHeight  = APP((state) => state.settings.side_bars.navBarHeight.value);
-  const themeColor    = APP((state) => state.settings.general.colorTheme.value).toLowerCase();
+  const navBarHeight  = APP((state) => (state.settings.side_bars as SideBarsSettings | undefined)?.navBarHeight?.value ?? 50);
 
-  const enabled       = APP((state) => state.settings.reverseCam.enabled.value);
+  const enabled       = APP((state) => state.settings.reverseCam as { enabled?: { value: boolean } } | undefined)?.enabled?.value;
 
-  
+  const viewEnabled: Partial<Record<string, boolean>> = {
+    Rearcam: enabled,
+  };
+
   const handleClick = () => {
     appUpdate((state) => { state.system.interface.navBar = true })
   }
@@ -82,18 +109,16 @@ const NavBar = ({ isHovering }) => {
     <>
       <Indicator isActive={isActive}>
         <GlowLarge color={theme.colors.theme[themeColor].active} opacity={isHovering ? 0.75 : 0}>
-          {content && <Blob theme={theme} isActive={isActive} isHovering={isHovering} themeColor={themeColor} onClick={handleClick}/> }
+          {content && <Blob isActive={isActive} isHovering={isHovering} activeColor={theme.colors.theme[themeColor].active} onClick={handleClick}/> }
         </GlowLarge>
       </Indicator>
-      <Navbar navBarHeight={navBarHeight} theme={theme} isActive={isActive}>
-        {['Dashboard', 'Carplay', 'Rearcam', 'Settings'].map((view) => (
+      <Navbar navBarHeight={navBarHeight} isActive={isActive}>
+        {['Dashboard', 'Carplay', 'Rearcam', 'Settings'].filter((view) => viewEnabled[view] !== false).map((view) => (
           <div className="column" key={view} style={{ position: 'relative', width: '100%'}}>
             <NavButton onClick={() => {
-              //console.log('click, ', view)
               appUpdate((state) => { state.system.view = view })
             }}>
               <IconNav
-                theme={theme}
                 isActive={currentView === view}
                 activeColor={theme.colors.theme[themeColor].active}
                 defaultColor={theme.colors.medium}

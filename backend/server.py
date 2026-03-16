@@ -537,13 +537,13 @@ class ServerThread(threading.Thread):
 
     # Handle UI log messages
     @socketio.on('info', namespace='/log')
-    def handle_frontend_error(args):
-        logger.info(f'[Frontend] {args}')
+    def handle_frontend_info(*args):
+        logger.info(f'[Frontend] {" ".join(str(a) for a in args)}')
 
     @socketio.on('debug', namespace='/log')
-    def handle_frontend_error(args):
-        logger.debug(f'[Frontend] {args}')
+    def handle_frontend_debug(*args):
+        logger.debug(f'[Frontend] {" ".join(str(a) for a in args)}')
 
     @socketio.on('error', namespace='/log')
-    def handle_frontend_error(args):
-        logger.error(f'[Frontend] {args}')
+    def handle_frontend_error(*args):
+        logger.error(f'[Frontend] {" ".join(str(a) for a in args)}')

@@ -1,8 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import styled, { useTheme } from 'styled-components';
-import { useNamespaces } from "../../../socket/Namespaces";
-import { Typography } from "../../../theme/styles/Typography";
-import { APP } from "../../../store/Store";
+import { useNamespaces } from "@/socket/Namespaces";
+import { Typography } from "@/theme/styles/Typography";
+import { APP } from "@/store/Store";
+
+type ReverseCamSettings = {
+  deviceSelectionMode?: { value: string };
+  deviceId?: { value: string };
+  deviceLabel?: { value: string };
+  videoWidth?: { value: number };
+  videoHeight?: { value: number };
+  videoFps?: { value: number };
+};
 
 const Container = styled.div`
   position: relative;
@@ -58,7 +67,7 @@ export default function Rearcam() {
 
   const Caption = Typography.Subtitle;
   const theme = useTheme();
-  const reverseCamSettings = APP((state) => state.settings.reverseCam);
+  const reverseCamSettings = APP((state) => state.settings.reverseCam as ReverseCamSettings | undefined);
 
   const [status, setStatus] =
     useState<"idle" | "opening" | "playing" | "error" | "denied">("idle");

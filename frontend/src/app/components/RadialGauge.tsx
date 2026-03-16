@@ -1,6 +1,8 @@
-import { DATA, APP } from '../../store/Store';
+import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
 import styled, { useTheme } from 'styled-components';
 import { useState, useEffect, useRef } from 'react';
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
 import * as d3 from 'd3';
 
 
@@ -8,19 +10,26 @@ const cos = Math.cos;
 const sin = Math.sin;
 const π = Math.PI;
 
-const f_matrix_times = (([[a, b], [c, d]], [x, y]) => [a * x + b * y, c * x + d * y]);
-const f_rotate_matrix = (x => [[cos(x), -sin(x)], [sin(x), cos(x)]]);
-const f_vec_add = (([a1, a2], [b1, b2]) => [a1 + b1, a2 + b2]);
+type ModuleSelector = ((select: (s: ModuleState) => unknown) => unknown) | undefined;
+
+type SensorConfig = { label?: string; max_value?: number; min_value?: number; limit_start?: number; unit?: string };
+
+type MarkerDatum = { x1: number; y1: number; x2: number; y2: number; index: number };
+type LabelDatum = { x: number; y: number; labelValue: string };
+
+const f_matrix_times = ([[a, b], [c, d]]: [[number, number], [number, number]], [x, y]: [number, number]): [number, number] => [a * x + b * y, c * x + d * y];
+const f_rotate_matrix = (x: number): [[number, number], [number, number]] => [[cos(x), -sin(x)], [sin(x), cos(x)]];
+const f_vec_add = ([a1, a2]: [number, number], [b1, b2]: [number, number]): [number, number] => [a1 + b1, a2 + b2];
 
 // Helper function to format numbers to single decimal magnitude
-const formatToSingleDecimal = (number) => {
-    if (number === 0) return "0";
+const formatToSingleDecimal = (number: number): number => {
+    if (number === 0) return 0;
     const magnitude = Math.floor(Math.log10(Math.abs(number)));
     const divisor = Math.pow(10, magnitude);
     return Math.floor(number / divisor);
 };
 
-const calculateIncrement = (value) => {
+const calculateIncrement = (value: number): number => {
     const magnitude = Math.floor(Math.log10(Math.abs(value)));
 
     // Determine step size based on the magnitude of the value
@@ -56,23 +65,30 @@ const Container = styled.div`
     box-sizing: border-box;
 `;
 
+interface RadialGaugeProps {
+    sensor: string;
+    type: string;
+    bars?: boolean;
+    showLabels?: boolean;
+}
+
 export const RadialGauge = ({
     sensor,
     type,
     bars = true,
     showLabels = true,
-}) => {
+}: RadialGaugeProps) => {
 
     // Load Settings
     const modules = APP((state) => state.modules);
     const theme = useTheme()
     const data = DATA((state) => state.data)
     // Load interface config based on type
-    const store = modules[type];
+    const store = modules[type] as ModuleSelector;
     // Use safe lookup for sensor settings
-    const settings = store
-        ? store((state) => state.settings.sensors[sensor]) || {}
-        : {};
+    const settings: SensorConfig = store
+        ? (store as (select: (s: ModuleState) => unknown) => unknown)((state) => (state.settings.sensors as Record<string, unknown> | undefined)?.[sensor]) as SensorConfig || {} as SensorConfig
+        : {} as SensorConfig;
 
     const label = settings.label ?? "N/A";
     const maxValue = settings.max_value ?? 100;  // default max
@@ -80,9 +96,9 @@ export const RadialGauge = ({
     const limitStart = settings.limit_start ?? 80;
     const unit = settings.unit ?? "";
 
-    let value = data[sensor] ?? minValue;
+    let value: number = (data[sensor] ?? minValue) as number;
 
-    const colorTheme = APP((state) => state.settings.general.colorTheme.value).toLowerCase()
+    const colorTheme = useThemeColor();
     // State variables for SVG content and rendering
 
 
@@ -91,11 +107,11 @@ export const RadialGauge = ({
     const [mainRadius, setMainRadius] = useState(0);
 
     const padding = 40;
-    const containerRef = useRef(null);
+    const containerRef = useRef<HTMLDivElement>(null);
 
     /* Observe container resizing and update dimensions. */
     useEffect(() => {
-        let resizeObserver = null;
+        let resizeObserver: ResizeObserver | null = null;
         const handleResize = () => {
             if (containerRef.current) {
                 setDimensions({
@@ -139,7 +155,7 @@ export const RadialGauge = ({
     if (value < minValue) value = minValue;
 
 
-    const angleToRadians = (angle) => angle * π / 180;
+    const angleToRadians = (angle: number): number => angle * π / 180;
 
     /* Calculate arc lengths in percentage */
     const percentFillerEnd = (value / maxValue) * 100;
@@ -165,14 +181,14 @@ export const RadialGauge = ({
     const rotMatrix = f_rotate_matrix(mainRotationRadian);
 
     /* Calculate Arcs */
-    const computeCoordinates = (angle, mainRadius) => {
-        const vector = [mainRadius * cos(angle), mainRadius * sin(angle)];
+    const computeCoordinates = (angle: number, mainRadius: number): [number, number] => {
+        const vector: [number, number] = [mainRadius * cos(angle), mainRadius * sin(angle)];
         const rotatedVector = f_matrix_times(rotMatrix, vector);
         return f_vec_add(rotatedVector, [cx, cy]);
     };
 
 
-    const computeFlags = (arc, threshold) => {
+    const computeFlags = (arc: number, threshold: number): string => {
         const fA = ((arc > threshold) ? 1 : 0); //Larger Arc : Smaller Arc
         const fS = ((arc > 0) ? 1 : 0); //Clockwise : Counterclockwise
         return (`${fA} ${fS}`)
@@ -180,7 +196,7 @@ export const RadialGauge = ({
 
     //   d={generateArc(progressArc, 0, outlineRadius, 0, limitArc, mainArc)}
 
-    const generateArc = (arcAngle, arcOffset, arcRadius, radiusOffset, reference, threshold) => {
+    const generateArc = (arcAngle: number, arcOffset: number, arcRadius: number, radiusOffset: number, reference: number, threshold: number): string => {
         const radius = arcRadius + radiusOffset
 
         const [sx, sy] = computeCoordinates(0 + arcOffset, radius);
@@ -196,12 +212,12 @@ export const RadialGauge = ({
     }
 
 
-    const generateMarkerGradient = (index, totalMarkers, progressArc) => {
+    const generateMarkerGradient = (index: number, totalMarkers: number, progressArc: number): string => {
         // Find the position of the lightest color (corresponding to progressArc)
         const lightestPosition = Math.floor((progressArc / mainArc) * totalMarkers);
 
         // Now, create a color scale where the lightest color corresponds to the progressArc position
-        const colorScale = d3.scaleLinear()
+        const colorScale = d3.scaleLinear<string>()
             .domain([0, lightestPosition, totalMarkers - 1])  // Domain from start, progress arc, to end
             .range([theme.colors.theme[colorTheme].default, (value > limitStart ? theme.colors.theme[colorTheme].highlightLight : theme.colors.theme[colorTheme].active)]);  // Dark to active to light
 
@@ -212,7 +228,7 @@ export const RadialGauge = ({
 
 
     // Modify the `generateMarkers` function to include the gradient effect
-    const generateMarkers = (markerStart, markerEnd, markerWidth, markerCount) => {
+    const generateMarkers = (markerStart: number, markerEnd: number, markerWidth: number, markerCount: number) => {
         const markers = [];
         const angleStep = mainArc / markerCount; // Angle step for all markers along the main arc
         const maxMarkers = Math.floor((progressArc / mainArc) * markerCount); // Only draw markers up to progressArc
@@ -279,7 +295,7 @@ export const RadialGauge = ({
             .attr("stop-color", theme.colors.theme[colorTheme].default)  // Starting color
             .append("stop")
             .attr("offset", "100%")
-            .attr("stop-color", theme.colors.theme[colorTheme].light); // Ending color
+            .attr("stop-color", (theme.colors.theme[colorTheme] as unknown as Record<string, string>)['light']); // Ending color
 
         // Add the main arc as background
         svg
@@ -320,22 +336,22 @@ export const RadialGauge = ({
             .enter()
             .append("line")
             .attr("class", "progressArc")
-            .attr("x1", (d) => d.x1)
-            .attr("y1", (d) => d.y1)
-            .attr("x2", (d) => d.x2)
-            .attr("y2", (d) => d.y2)
-            .attr("stroke", (d, i) => generateMarkerGradient(i, 130, progressArc))  // Apply gradient // 
+            .attr("x1", (d: MarkerDatum) => d.x1)
+            .attr("y1", (d: MarkerDatum) => d.y1)
+            .attr("x2", (d: MarkerDatum) => d.x2)
+            .attr("y2", (d: MarkerDatum) => d.y2)
+            .attr("stroke", (_d: MarkerDatum, i: number) => generateMarkerGradient(i, 130, progressArc))  // Apply gradient //
             .attr("stroke-width", progressWidth)
             .attr("opacity", 1); // Fade-in effect
 
         progress
             .transition()
             .duration(1000)
-            .attr("x1", (d) => d.x1)
-            .attr("y1", (d) => d.y1)
-            .attr("x2", (d) => d.x2)
-            .attr("y2", (d) => d.y2)
-            .attr("stroke", (d, i) => generateMarkerGradient(i, 130, progressArc));  // Apply gradient in transition
+            .attr("x1", (d: MarkerDatum) => d.x1)
+            .attr("y1", (d: MarkerDatum) => d.y1)
+            .attr("x2", (d: MarkerDatum) => d.x2)
+            .attr("y2", (d: MarkerDatum) => d.y2)
+            .attr("stroke", (_d: MarkerDatum, i: number) => generateMarkerGradient(i, 130, progressArc));  // Apply gradient in transition
 
         // Add markers with gradient color effect
         if (bars) {
@@ -350,22 +366,22 @@ export const RadialGauge = ({
                 .enter()
                 .append("line")
                 .attr("class", "marker")
-                .attr("x1", (d) => d.x1)
-                .attr("y1", (d) => d.y1)
-                .attr("x2", (d) => d.x2)
-                .attr("y2", (d) => d.y2)
-                .attr("stroke", (d) => theme.colors.medium)  // Apply gradient // 
+                .attr("x1", (d: MarkerDatum) => d.x1)
+                .attr("y1", (d: MarkerDatum) => d.y1)
+                .attr("x2", (d: MarkerDatum) => d.x2)
+                .attr("y2", (d: MarkerDatum) => d.y2)
+                .attr("stroke", (_d: MarkerDatum) => theme.colors.medium)  // Apply gradient //
                 .attr("stroke-width", markerWidth)
                 .attr("opacity", 1); // Fade-in effect
 
             markers
                 .transition()
                 .duration(1000)
-                .attr("x1", (d) => d.x1)
-                .attr("y1", (d) => d.y1)
-                .attr("x2", (d) => d.x2)
-                .attr("y2", (d) => d.y2)
-                .attr("stroke", (d, i) => generateMarkerGradient(i, markerCount, progressArc));  // Apply gradient in transition
+                .attr("x1", (d: MarkerDatum) => d.x1)
+                .attr("y1", (d: MarkerDatum) => d.y1)
+                .attr("x2", (d: MarkerDatum) => d.x2)
+                .attr("y2", (d: MarkerDatum) => d.y2)
+                .attr("stroke", (_d: MarkerDatum, i: number) => generateMarkerGradient(i, markerCount, progressArc));  // Apply gradient in transition
         }
 
         // Add text labels
@@ -386,7 +402,7 @@ export const RadialGauge = ({
                 .attr("text-anchor", "middle")
                 .attr("dominant-baseline", "middle")
                 .attr("opacity", 1) // Ensure visibility
-                .text((d) => {
+                .text((d: LabelDatum) => {
                     // Check if labelValue is above 4 digits
                     const value = d.labelValue;
                     if (value.toString().length > 3) {
@@ -397,12 +413,12 @@ export const RadialGauge = ({
 
             // Animate the position of the labels
             labelEnter
-                .attr("x", (d) => d.x)
-                .attr("y", (d) => d.y)
+                .attr("x", (d: LabelDatum) => d.x)
+                .attr("y", (d: LabelDatum) => d.y)
                 .transition()
                 .duration(1000) // Transition duration for smooth update
-                .attr("x", (d) => d.x)
-                .attr("y", (d) => d.y);
+                .attr("x", (d: LabelDatum) => d.x)
+                .attr("y", (d: LabelDatum) => d.y);
         }
 
         // Add unit label
@@ -430,8 +446,9 @@ export const RadialGauge = ({
     }, [dimensions, progressArc, bars]); // Re-run whenever progressArc, dimensions, or bars change
 
 
-
-
+    // suppress unused variable warnings for variables used only in JSX/effects
+    void label;
+    void unit;
 
 
 

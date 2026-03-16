@@ -1,8 +1,8 @@
 /* eslint-disable no-case-declarations */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { findDevice, requestDevice, CommandMapping, } from 'node-carplay/web'
-import { eventEmitter } from '../app/helper/EventEmitter';
-import { useNamespaces } from '../socket/Namespaces';
+import { eventEmitter } from '@/app/helper/EventEmitter';
+import { useNamespaces } from '@/socket/Namespaces';
 
 import styled, { css, useTheme } from 'styled-components';
 
@@ -12,8 +12,8 @@ import useCarplayAudio from './useCarplayAudio'
 import { useCarplayTouch } from './useCarplayTouch'
 import { InitEvent } from './worker/render/RenderEvents'
 
-import { APP } from '../store/Store';
-import hexToRGBA from '../app/helper/HexToRGBA'
+import { APP } from '@/store/Store';
+import hexToRGBA from '@/app/helper/HexToRGBA'
 
 import "./../themes.scss"
 
@@ -41,7 +41,12 @@ const Stream = styled.div`
   margin: 0;
 `
 
-const Overlay = styled.div`
+interface OverlayProps {
+  isVisible: boolean;
+  navVisible: boolean;
+}
+
+const Overlay = styled.div<OverlayProps>`
   position: absolute;
   top: 0;
   left: 0;
@@ -49,7 +54,7 @@ const Overlay = styled.div`
   width: 100%;
 
   zIndex: 2;
-  
+
   display: flex;
   justify-content: center;
   alignItems: center;
@@ -82,17 +87,27 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   const content         = APP((state) => state.system.interface.content)
   const navBar          = APP((state) => state.system.interface.navBar)
 
-  const dongleConfig    = APP((state) => state.settings.dongle_config);
-  const exitToDash      = APP((state) => state.settings.general.exitToDash);
+  const view            = APP((state) => state.system.view);
+  type DongleConfig = Record<string, { value: unknown }>;
+  type GeneralSettings = { exitToDash?: { value: boolean } };
 
-  const [phoneState, setPhoneState] = useState<Boolean | null>(false);
+  const dongleConfig = APP((state) => state.settings.dongle_config as DongleConfig | undefined);
+  const exitToDash = APP((state) => (state.settings.general as GeneralSettings | undefined)?.exitToDash?.value ?? false);
+  const exitToDashRef = useRef(exitToDash);
+
+  useEffect(() => { exitToDashRef.current = exitToDash; }, [exitToDash]);
+  const useStandardizedResolution = APP((state) => (state.settings.dongle_config as { useStandardizedResolution?: { value: boolean } } | undefined)?.useStandardizedResolution?.value ?? false);
+
+  const [phoneState, setPhoneState] = useState<boolean | null>(false);
   const lastDongleConfigSigRef = useRef<string | null>(null);
 
+  // Keys that must not be forwarded to the dongle driver
+  const VLINK_ONLY_KEYS = ['useStandardizedResolution'];
 
   const flattenConfig = (config: Record<string, any>) => {
-
     const result: Record<string, any> = {};
     Object.entries(config).forEach(([key, value]) => {
+      if (VLINK_ONLY_KEYS.includes(key)) return;
       if (typeof value === "object" && value !== null && "value" in value) {
         result[key] = value.value;
       }
@@ -101,11 +116,30 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   };
 
   const config = useMemo(() => {
-    const dongleConfigFlat = flattenConfig(dongleConfig);
+    const dongleConfigFlat = dongleConfig ? flattenConfig(dongleConfig) : {};
+    let configWidth  = width;
+    let configHeight = height;
+
+    if (useStandardizedResolution) {
+      const standards = [
+        { w: 800, h: 480 },
+        { w: 960, h: 540 },
+        { w: 1024, h: 600 },
+        { w: 1280, h: 720 },
+        { w: 1920, h: 1080 },
+        { w: 2560, h: 1440 },
+        { w: 3840, h: 2160 },
+      ]
+      const snap = standards.find(s => s.w >= width && s.h >= height)
+      if (snap) {
+        configWidth  = snap.w
+        configHeight = snap.h
+      }
+    }
     const carplayConfig = {
       ...dongleConfigFlat,
-      width: width,
-      height: height,
+      width: configWidth,
+      height: configHeight,
     };
     
     const sig = JSON.stringify(dongleConfigFlat);
@@ -115,7 +149,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     }
 
     return carplayConfig;
-  }, [dongleConfig, width, height]);
+  }, [dongleConfig, width, height, useStandardizedResolution]);
 
 
   const mainElem = useRef<HTMLDivElement>(null)
@@ -178,18 +212,23 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     renderWorker.onmessage = ev => {
       const { type } = ev.data;
       switch (type) {
-        case 'streamStarted':
-          socket.log.emit('info', '(CarPlay) Stream started')
+        case 'streamStarted': {
+          const { codec, codedWidth, codedHeight } = ev.data.config ?? {}
+          socket.log.emit('info', `(CarPlay) Stream started: ${codedWidth}x${codedHeight} (${codec})`)
           // This useEffect will notify when the phone is connected and the stream started
           appUpdate((state) => {
             state.system.carplay.connected = true;
           });
-
           break;
+        }
       }
     };
+    renderWorker.onerror = (ev) => {
+      socket.log.emit('error', `(CarPlay) Render worker error: ${ev.message} (${ev.filename}:${ev.lineno})`);
+    };
     return () => {
-      renderWorker.onmessage = null; // Clean up the listener when the worker changes
+      renderWorker.onmessage = null;
+      renderWorker.onerror = null;
     };
   }, [renderWorker]);
   /* V-Link Mod */
@@ -220,6 +259,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
 
           appUpdate((state) => {
             state.system.carplay.worker = true;
+            state.system.carplay.phone = true;
           });
 
           break
@@ -235,9 +275,10 @@ function Carplay({ command, commandCounter }: CarplayProps) {
             state.system.interface.content = true
           });
 
-          if (phoneState)
+          if (phoneState) {
             console.log('(CarPlay) Phone still connected... Streaming error?')
             socket.log.emit('debug', '(CarPlay) Phone still connected... Streaming error?')
+          }
 
           break
         case 'requestBuffer':
@@ -263,16 +304,15 @@ function Carplay({ command, commandCounter }: CarplayProps) {
               stopRecording()
               break
             case CommandMapping.requestHostUI:
-              if (exitToDash) {
+              if (exitToDashRef.current) {
                 appUpdate((state) => {
                   state.system.view = "Dashboard";
                 });
-              } 
-              /* else {
+              } else {
                 appUpdate((state) => {
                   state.system.interface.navBar = true;
                 });
-              } */
+              }
           }
           break
         case 'failure':
@@ -304,11 +344,21 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     carplayWorker.postMessage({ type: 'keyCommand', command: command })
   }, [commandCounter]);
 
+  // Request a new frame when re-entering the CarPlay view so key commands resume
+  useEffect(() => {
+    if (view !== 'Carplay') return
+    carplayWorker.postMessage({ type: 'frame' })
+  }, [view]);
+
+  // Keep a ref to the latest config so checkDevice always sends fresh values
+  const configRef = useRef(config)
+  useEffect(() => { configRef.current = config }, [config])
+
   const checkDevice = useCallback(
     async (request: boolean = false) => {
       const device = request ? await requestDevice() : await findDevice()
       if (device) {
-        carplayWorker.postMessage({ type: 'start', payload: { config } })
+        carplayWorker.postMessage({ type: 'start', payload: { config: configRef.current } })
 
         console.log('Phone connected')
         socket.log.emit('info', '(CarPlay) Phone connected')
@@ -318,13 +368,16 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           state.system.carplay.phone = true;
         });
       } else {
-        console.log('Phone disconnected')
-        socket.log.emit('info', '(CarPlay) Phone disconnected')
+        const workerActive = APP.getState().system.carplay.worker
+        if (!workerActive) {
+          console.log('Phone disconnected')
+          socket.log.emit('info', '(CarPlay) Phone disconnected')
 
-        setPhoneState(false)
-        appUpdate((state) => {
-          state.system.carplay.phone = false;
-        });
+          setPhoneState(false)
+          appUpdate((state) => {
+            state.system.carplay.phone = false;
+          });
+        }
       }
     },
     [carplayWorker]
@@ -369,7 +422,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     checkDevice(true)
   }, [checkDevice])
 
-  const sendTouchEvent = useCarplayTouch(carplayWorker, width, height)
+  const sendTouchEvent = useCarplayTouch(carplayWorker)
 
 
   return (
@@ -379,7 +432,6 @@ function Carplay({ command, commandCounter }: CarplayProps) {
         onPointerMove={sendTouchEvent}
         onPointerUp={sendTouchEvent}
         onPointerCancel={sendTouchEvent}
-        onPointerOut={sendTouchEvent}
 
         style={{ height: height, width: width }}>
 
@@ -387,9 +439,8 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           ref={canvasRef}
           id="video"
           style={
-
             carplaySettings.paired && carplaySettings.dongle
-              ? { height: '100%', overflow: 'hidden' }
+              ? { display: 'block', width: '100%', height: '100%' }
               : { display: 'none' }
           }
         />

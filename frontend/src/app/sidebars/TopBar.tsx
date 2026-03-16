@@ -1,11 +1,24 @@
 import { useState, useEffect, useMemo } from "react";
-import { APP, DATA } from '../../store/Store';
+import { APP, DATA, ModuleState, useThemeColor } from '@/store/Store';
 import styled, { css, useTheme } from 'styled-components';
 
-import { IconSmall, CustomIcon } from '../../theme/styles/Icons';
-import { Caption1 } from '../../theme/styles/Typography';
+import { IconSmall, CustomIcon } from '@/theme/styles/Icons';
+import { Caption1 } from '@/theme/styles/Typography';
 
-const Topbar = styled.div`
+type SideBarsSettings = { topBar: { value: boolean }; topBarHeight: { value: number } };
+type DashTopbarSettings = { value: { value: string; type: string } };
+type SensorConfig = { app_id?: string; limit_start?: number };
+
+interface TopbarProps {
+  height: number;
+  isActive: boolean;
+}
+
+interface ScrollerContentProps {
+  active: boolean;
+}
+
+const Topbar = styled.div<TopbarProps>`
   position: absolute;
   top: 0;
   z-index: 3;
@@ -15,8 +28,8 @@ const Topbar = styled.div`
   height: ${({ height }) => `${height}px`};
   animation: ${({ height, theme, isActive }) => css`
     ${isActive
-      ? theme.animations.getSlideUp(-height)
-      : theme.animations.getSlideDown(-height)} 0.3s ease-in-out forwards
+      ? theme.animations.getSlideDown(-height)
+      : theme.animations.getSlideUp(-height)} 0.3s ease-in-out forwards
   `};
   width: 100%;
   display: flex;
@@ -60,7 +73,7 @@ const Right = styled.div`
 
 const Scroller = styled.div`
   position: relative;
-  display: flex; 
+  display: flex;
   flex-direction: column;
 
   width: 100%;
@@ -69,7 +82,7 @@ const Scroller = styled.div`
   overflow: hidden;
 `;
 
-const ScrollerContent = styled.div`
+const ScrollerContent = styled.div<ScrollerContentProps>`
   position: absolute;
 
   display: flex;
@@ -86,40 +99,41 @@ const ScrollerContent = styled.div`
 
 const TopBar = () => {
   const theme = useTheme();
+  const themeColor = useThemeColor();
 
-  const topBarActive = APP(state => state.settings.side_bars.topBar.value);
-  const topBarHeight = APP(state => state.settings.side_bars.topBarHeight.value);
-  const colorTheme = APP(state => state.settings.general.colorTheme.value.toLowerCase());
-  const dashSettings = APP(state => state.settings.dash_topbar);
+  const sideBars = APP(state => state.settings.side_bars) as SideBarsSettings | undefined;
+  const topBarActive = sideBars?.topBar?.value ?? true;
+  const topBarHeight = sideBars?.topBarHeight?.value ?? 40;
+  const dashSettings = APP(state => state.settings.dash_topbar) as DashTopbarSettings | undefined;
   const view = APP(state => state.system.view);
   const content = APP(state => state.system.interface.content);
-  const navBar = APP(state => state.system.interface.navBar);
-  const phone = APP(state => state.system.carplay.phone);
+  const phone = APP((state) => state.system.carplay.phone);
   const wifiState = APP(state => state.system.wifiState);
   const modules = APP(state => state.modules);
   const data = DATA(state => state.data);
 
 
-  const valueName = dashSettings.value.value;
-  const valueType = dashSettings.value.type;
+  const valueName = dashSettings?.value?.value ?? '';
+  const valueType = dashSettings?.value?.type ?? '';
 
-  const sensor =
+  const sensor: SensorConfig =
     valueType && valueName && modules[valueType]
-      ? modules[valueType]((state) => state.settings.sensors[valueName]) || {}
+      ? ((modules[valueType] as (select: (s: ModuleState) => unknown) => unknown)(
+          (state: ModuleState) => (state.settings.sensors as Record<string, unknown> | undefined)?.[valueName]
+        ) as SensorConfig | undefined) ?? {}
       : {};
 
-  const valueID    = sensor.app_id ?? "err";      // fallback icon ID
-  const valueData  = data[valueName] ?? "N/A";   // fallback value
+  const valueID    = sensor.app_id ?? "err";
+  const valueData  = data[valueName] ?? "N/A";
   const valueLimit = sensor.limit_start ?? Infinity;
 
   const [time, setDate] = useState(new Date());
 
   useEffect(() => {
-    const timer1 = setInterval(() => setDate(new Date()), 60000); // ✅ update once per minute
+    const timer1 = setInterval(() => setDate(new Date()), 60000);
     return () => clearInterval(timer1);
   }, []);
 
-  // ✅ pre-format once per update
   const formattedTime = useMemo(
     () => time.toLocaleTimeString('sv-SV', { hour: '2-digit', minute: '2-digit' }),
     [time]
@@ -128,12 +142,8 @@ const TopBar = () => {
   return (
     <Topbar
       isActive={
-        topBarActive &&
-        view === 'Carplay' &&
-        !content &&
-        !navBar
+        view !== 'Carplay' || topBarActive || !phone
       }
-      theme={theme}
       height={topBarHeight}
     >
       <Left>
@@ -144,18 +154,18 @@ const TopBar = () => {
           <ScrollerContent active={!content}>
             <CustomIcon
               stroke={3}
-              size={'14px'}
-              isActive={valueData > valueLimit}
-              activeColor={theme.colors.theme[colorTheme].highlightDark}
+              size={14}
+              isActive={(valueData as number) > valueLimit}
+              activeColor={theme.colors.theme[themeColor].highlightDark}
               defaultColor={theme.colors.light}
               inactiveColor={theme.colors.medium}
-              glowColor={theme.colors.theme[colorTheme].default}
+              glowColor={theme.colors.theme[themeColor].default}
             >
-              {sensor.app_id && 
+              {sensor.app_id &&
               <use xlinkHref={`/assets/svg/icons/data/${valueID}.svg#${valueID}`}></use>
               }
             </CustomIcon>
-            <Caption1>{valueData}</Caption1>
+            <Caption1>{valueData as string}</Caption1>
           </ScrollerContent>
         </Scroller>
       </Left>

@@ -25,7 +25,7 @@ const pendingAudio: Record<AudioPlayerKey, Int16Array[]> = {}
 const handleMessage = (message: CarplayMessage) => {
   const { type, message: payload } = message
   if (type === 'video' && videoPort) {
-    videoPort.postMessage(new RenderEvent(payload.data), [payload.data.buffer])
+    videoPort.postMessage(new RenderEvent(payload.data as unknown as ArrayBuffer), [payload.data.buffer as unknown as ArrayBuffer])
   } else if (type === 'audio' && payload.data) {
     const { decodeType, audioType } = payload
     const audioKey = createAudioPlayerKey(decodeType, audioType)
@@ -104,7 +104,7 @@ onmessage = async (event: MessageEvent<Command>) => {
       break
     case 'keyCommand':
       const command: KeyCommand = event.data.command
-      const data = new SendCommand(command)
+      const data = new SendCommand(command as ConstructorParameters<typeof SendCommand>[0])
       if (carplayWeb) {
         carplayWeb.dongleDriver.send(data)
       }

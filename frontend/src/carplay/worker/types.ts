@@ -26,12 +26,15 @@ export type StartPayload = {
   config: Partial<DongleConfig>
 }
 
+export type KeyCommand = string
+
 export type Command =
   | { type: 'frame' }
   | { type: 'stop' }
   | { type: 'initialise'; payload: InitialisePayload }
   | { type: 'audioBuffer'; payload: AudioPlayerPayload }
   | { type: 'start'; payload: StartPayload }
+  | { type: 'keyCommand'; command: KeyCommand }
   | {
       type: 'touch'
       payload: { x: number; y: number; action: TouchAction }

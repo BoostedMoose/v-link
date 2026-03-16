@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import styled, { keyframes, css } from 'styled-components';
-import { Typography } from '../theme/styles/Typography';
-import { Button } from '../theme/styles/Inputs';
-import { APP } from '../store/Store';
+import { Typography } from '@/theme/styles/Typography';
+import { Button } from '@/theme/styles/Inputs';
+import { APP } from '@/store/Store';
 
-import { useNamespaces } from '../socket/Namespaces';
+import { useNamespaces } from '@/socket/Namespaces';
 const socket = useNamespaces();
 //socket.log.emit('error', 'Could not load profile. Exiting.')
 
@@ -62,7 +62,22 @@ const Options = styled.div`
     transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 `;
 
-const OptionItem = styled.div`
+interface OptionItemProps {
+  platform: string | null;
+  hasSelection: boolean;
+  isSelected: boolean;
+  animationPhase: string | null;
+  index: number;
+  totalItems: number;
+  isTransitioning: boolean;
+}
+
+interface SVGContainerProps {
+  platform: string | null;
+  isSelected: boolean;
+}
+
+const OptionItem = styled.div<OptionItemProps>`
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -103,7 +118,7 @@ const OptionItem = styled.div`
     }};
 `;
 
-const SVGContainer = styled.div`
+const SVGContainer = styled.div<SVGContainerProps>`
     transition: ${props => props.platform ? 'none' : 'all 0.6s cubic-bezier(0.4, 0, 0.2, 1)'};
     transform: ${props => props.platform ? 'scale(1)' : (props.isSelected ? 'scale(1.2)' : 'scale(1)')};
     cursor: ${props => props.platform ? 'default' : 'pointer'};
@@ -118,17 +133,17 @@ const Init = () => {
     const Title = Typography.Title;
     const Caption2 = Typography.Caption2;
 
-    const [profiles, setProfiles] = useState({});
-    const [options, setOptions] = useState([]);
-    const [platform, setPlatform] = useState(null);
-    const [selectedIndex, setSelectedIndex] = useState(null);
-    const [animationPhase, setAnimationPhase] = useState(null); // 'fade' or 'slide'
+    const [profiles, setProfiles] = useState<Record<string, string[]>>({});
+    const [options, setOptions] = useState<string[]>([]);
+    const [platform, setPlatform] = useState<string | null>(null);
+    const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+    const [animationPhase, setAnimationPhase] = useState<string | null>(null); // 'fade' or 'slide'
     const [isTransitioning, setIsTransitioning] = useState(false);
     const [visible, setVisible] = useState(true);
 
     const appUpdate = APP((state) => state.update);
 
-    const startApp = (custom_config) => {
+    const startApp = (custom_config?: boolean) => {
         if (custom_config)
             socket.log.emit('info', 'Config-files found, loading settings.');
         else
@@ -147,7 +162,7 @@ const Init = () => {
         // Checks whether .config/v-link/ exists
         // Returns either true or an object with selectable profiles.
         socket.log.emit('info', `Checking for existing config files...`);
-        socket.sys.emit('systemTask', 'check', (data) => {
+        socket.sys.emit('systemTask', 'check', (data: Record<string, string[]> | true) => {
             if (data === true) {
                 startApp();
             } else {
@@ -157,7 +172,7 @@ const Init = () => {
         });
     }, []);
 
-    const handleSelectPlatform = (profile, index) => {
+    const handleSelectPlatform = (profile: string, index: number) => {
         setSelectedIndex(index);
         setAnimationPhase('fade');
         setIsTransitioning(true);
@@ -178,7 +193,7 @@ const Init = () => {
         }, 600);
     };
 
-    const handleSelectEngine = (engine, index) => {
+    const handleSelectEngine = (engine: string, index: number) => {
         setSelectedIndex(index);
         socket.log.emit('info', `Selected profile: ${engine}`);
 
@@ -188,7 +203,7 @@ const Init = () => {
         };
 
 
-        socket.sys.emit('systemTask', 'load', vehicle, (data) => {
+        socket.sys.emit('systemTask', 'load', vehicle, (data: boolean) => {
             if (data) {
                 startApp(true);
             } else {
@@ -214,7 +229,6 @@ const Init = () => {
                             <OptionItem
                                 key={item}
                                 index={index}
-                                selectedIndex={selectedIndex}
                                 isSelected={selectedIndex === index}
                                 hasSelection={selectedIndex !== null}
                                 platform={platform}
@@ -271,7 +285,7 @@ const Init = () => {
                             <Button
                                 style={{ width: '25%' }}
                                 onClick={() =>
-                                    socket.sys.emit('systemTask', 'load', "default", (data) => {
+                                    socket.sys.emit('systemTask', 'load', "default", (data: boolean) => {
                                         if (data) {
                                             startApp(false);
                                         }

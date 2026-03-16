@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import SocketMock from 'socket.io-mock';
-import { APP } from '../store/Store';
+import { APP } from '@/store/Store';
 
 const appStore = APP as any;
 

@@ -1,20 +1,53 @@
-import { useState, useEffect, useRef, use } from 'react';
-import styled, { css, useTheme } from 'styled-components';
-import { Fade } from '../theme/styles/Effects';
+import { useState, useEffect, useRef } from 'react';
+import React from 'react';
+import styled, { css } from 'styled-components';
+import { Fade as FadeBase } from '@/theme/styles/Effects';
+const Fade = FadeBase as React.ComponentType<{ className?: string; fadeLength?: number; children?: React.ReactNode }>;
 
-import { APP } from '../store/Store';
+import { APP } from '@/store/Store';
 
 import Dashboard from './pages/dashboard/Dashboard';
 import Carplay from './pages/carplay/Carplay';
 import Rearcam from './pages/rearcam/Rearcam';
 import Settings from './pages/settings/Settings';
-import NavBar from '../app/sidebars/NavBar';
-import SideBar from '../app/sidebars/SideBar';
-import TopBar from '../app/sidebars/TopBar';
+import NavBar from '@/app/sidebars/NavBar';
+import SideBar from '@/app/sidebars/SideBar';
+import TopBar from '@/app/sidebars/TopBar';
 import { io } from "socket.io-client";
-import { useNamespaces } from '../socket/Namespaces';
+import { useNamespaces } from '@/socket/Namespaces';
 
-const MainContainer = styled.div`
+type SideBarsSettings = { topBarHeight: { value: number }; navBarHeight: { value: number } };
+type InterfaceSettings = { carplay: boolean; navBar: boolean; content: boolean };
+type AppBindings = { switch: { value: string } };
+
+interface MainContainerProps {
+  height: number;
+  width: number;
+  interfaceSettings: InterfaceSettings;
+  view: string;
+  sidebarSettings: SideBarsSettings;
+  contentPadding: number;
+}
+
+interface CardProps {
+  currentView: string;
+  carplayVisible: boolean;
+  minHeight: number;
+  maxHeight: number;
+  collapseLength: number;
+  stream: boolean;
+}
+
+interface NavBlockerProps {
+  sidebarSettings: SideBarsSettings;
+  contentPadding: number;
+  isActive: boolean;
+  collapseLength: number;
+  minHeight: number;
+  maxHeight: number;
+}
+
+const MainContainer = styled.div<MainContainerProps>`
   position: absolute;
   top: 0;
   left: 0;
@@ -37,7 +70,7 @@ const MainContainer = styled.div`
   background: none;
 `;
 
-const Card = styled.div`
+const Card = styled.div<CardProps>`
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -83,7 +116,7 @@ const Page = styled.div`
   overflow: hidden;
 `;
 
-const NavBlocker = styled.div`
+const NavBlocker = styled.div<NavBlockerProps>`
   width: 100%;
   height: ${({ sidebarSettings, contentPadding, isActive }) =>
     isActive
@@ -107,20 +140,19 @@ const Content = () => {
   const pauseKeyBinds     = APP((state) => state.pauseKeyBinds);
 
   const startedUp         = APP((state) => state.system.startedUp);
-  const sidebarSettings   = APP((state) => state.settings.side_bars);
+  const sidebarSettings   = APP((state) => state.settings.side_bars as SideBarsSettings | undefined);
   const interfaceSettings = APP((state) => state.system.interface);
   const carplaySettings   = APP((state) => state.system.carplay);
-  const appBindings       = APP((state) => state.settings.app_bindings);
-  const contentPadding    = APP((state) => state.settings.general.contentPadding.value);
+  const appBindings       = APP((state) => state.settings.app_bindings as AppBindings | undefined);
+  const contentPadding    = APP((state) => (state.settings.general as { contentPadding: { value: number } } | undefined)?.contentPadding?.value ?? 0);
   const view              = APP((state) => state.system.view);
 
   const socket = useNamespaces();
 
 
   const reverse           = APP((state) => state.system.reverse);
-  const reverseDelay      = APP((state) => state.settings.reverseCam.delay.value);
-
-  const theme = useTheme();
+  const reverseDelay      = APP((state) => (state.settings.reverseCam as { delay: { value: number } } | undefined)?.delay?.value ?? 2);
+  const rearcamEnabled    = APP((state) => (state.settings.reverseCam as { enabled?: { value: boolean } } | undefined)?.enabled?.value);
 
   const cardPadding = 20;
   const windowSize = { width: window.innerWidth, height: window.innerHeight };
@@ -131,21 +163,21 @@ const Content = () => {
   const [currentView, setCurrentView] = useState(view);
 
   /* Swipe / Navbar states */
-  const [swipeStartY, setSwipeStartY] = useState(null);
+  const [swipeStartY, setSwipeStartY] = useState<number | null>(null);
   const [swipeDistance, setSwipeDistance] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
-  const timerRef = useRef(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reverse refs + timer (to exit from rearcam)
-  const previousView = useRef(null);
+  const previousView = useRef<string | null>(null);
   const reverseNavigated = useRef(false);
-  const exitTimerRef = useRef(null);
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* Socket connection for reverse camera */
   useEffect(() => {
     const sysChannel = io("ws://localhost:4001/sys", { transports: ["websocket"] });
 
-    const onReverse = (active) => {
+    const onReverse = (active: boolean) => {
       socket.log.emit(`[Frontend] Reverse: ${active}`);
       appUpdate((state) => {
         state.system.reverse = active;
@@ -180,7 +212,7 @@ const Content = () => {
 
     // Exit: wait before return
     if (view === 'Rearcam' && reverseNavigated.current && exitTimerRef.current === null) {
-      exitTimerRef.current = window.setTimeout(() => {
+      exitTimerRef.current = setTimeout(() => {
         appUpdate((state) => {
           state.system.view = previousView.current || 'Dashboard';
         });
@@ -245,7 +277,10 @@ const Content = () => {
 
   /* Carplay connection effect */
   useEffect(() => {
-    if (carplaySettings.connected && carplaySettings.worker) {
+    // Primary: both connected (stream confirmed) and worker (plugged) are true
+    // Fallback: worker alone is true, meaning the session is active even if the render
+    // worker never fired streamStarted (e.g. SPS NALU not yet seen or renderer error)
+    if (carplaySettings.worker) {
       appUpdate((state) => { state.system.interface.carplay = true; });
     } else {
       appUpdate((state) => { state.system.interface.carplay = false; });
@@ -256,25 +291,26 @@ const Content = () => {
   useEffect(() => {
     if (view === 'Settings') {
       appUpdate((state) => { state.system.interface.navBar = true; });
-      clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
       return;
     }
 
     if (interfaceSettings.navBar) {
-      clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         appUpdate((state) => { state.system.interface.navBar = false; });
       }, 4000);
     }
 
-    return () => { clearTimeout(timerRef.current); };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [view, interfaceSettings.navBar, appUpdate]);
 
   /* Swipe detection handlers */
-  const handlePointerDown = (event) => {
+  const handlePointerDown = (event: React.MouseEvent | React.TouchEvent) => {
     if (view === 'Settings') return;
 
-    const clientY = event.clientY || event.touches?.[0]?.clientY;
+    const e = event as any;
+    const clientY: number = e.clientY || e.touches?.[0]?.clientY;
     setSwipeStartY(clientY);
 
     // Trigger navbar if click is in lower 10% of screen
@@ -283,9 +319,10 @@ const Content = () => {
     }
   };
 
-  const handlePointerMove = (event) => {
+  const handlePointerMove = (event: React.MouseEvent | React.TouchEvent) => {
     if (swipeStartY === null) return;
-    const currentY = event.clientY || event.touches?.[0]?.clientY;
+    const e = event as any;
+    const currentY: number = e.clientY || e.touches?.[0]?.clientY;
     const distance = swipeStartY - currentY; // swipe up = positive
     setSwipeDistance(distance);
     setIsHovering(distance > 0); // visual feedback
@@ -303,7 +340,7 @@ const Content = () => {
 
   /* Mouse hover detection for visual feedback */
   useEffect(() => {
-    const handleMouseMove = (event) => {
+    const handleMouseMove = (event: MouseEvent) => {
       const deadZone = 85; 
       setIsHovering(event.clientY > window.innerHeight * (deadZone / 100));
     };
@@ -315,8 +352,9 @@ const Content = () => {
   }, []);
 
   const renderView = () => {
-    const key = viewMap[currentView] ? currentView : 'Dashboard';
-    const Component = viewMap[key];
+    const vm = viewMap as Record<string, React.ComponentType>;
+    const key = vm[currentView] ? currentView : 'Dashboard';
+    const Component = vm[key];
     if (!Component) {
       console.error(`Component for view "${currentView}" is undefined.`);
       return null;
@@ -325,13 +363,19 @@ const Content = () => {
   };
 
   useEffect(() => {
-    appUpdate((state) => {
-      state.system.switch = appBindings.switch.value;
-    });
-  }, [appBindings.switch, appUpdate]);
+    if (appBindings?.switch?.value) {
+      appUpdate((state) => {
+        state.system.switch = appBindings!.switch.value;
+      });
+    }
+  }, [appBindings, appUpdate]);
+
+  const viewEnabled: Partial<Record<string, boolean>> = {
+    Rearcam: rearcamEnabled,
+  };
 
   const cycleView = () => {
-    const viewKeys = Object.keys(viewMap);
+    const viewKeys = Object.keys(viewMap).filter((v) => viewEnabled[v] !== false);
     let currentIndex = viewKeys.indexOf(view);
     currentIndex = (currentIndex + 1) % viewKeys.length;
     appUpdate((state) => { state.system.view = viewKeys[currentIndex]; });
@@ -352,8 +396,8 @@ const Content = () => {
           {<TopBar />}
           <NavBar isHovering={isHovering} swipeProgress={Math.min(swipeDistance / 100, 1)} />
           <MainContainer
-            sidebarSettings={sidebarSettings}
-            interfaceSettings={interfaceSettings}
+            sidebarSettings={sidebarSettings ?? { topBarHeight: { value: 0 }, navBarHeight: { value: 0 } }}
+            interfaceSettings={interfaceSettings as InterfaceSettings}
             view={view}
             contentPadding={contentPadding}
             height={windowSize.height}
@@ -368,25 +412,23 @@ const Content = () => {
             <SideBar collapseLength={collapseLength} />
             <Card
               stream={carplaySettings.connected}
-              theme={theme}
               currentView={view}
               carplayVisible={interfaceSettings.carplay}
-              maxHeight={windowSize.height - sidebarSettings.topBarHeight.value - cardPadding}
+              maxHeight={windowSize.height - (sidebarSettings?.topBarHeight?.value ?? 0) - cardPadding}
               minHeight={0}
               collapseLength={collapseLength / 1000}
             >
-              <Page theme={theme}>
+              <Page>
                 <Fade className={fadePage} fadeLength={fadeLength / 1000}>
                   {renderView()}
                 </Fade>
                 <NavBlocker
-                  sidebarSettings={sidebarSettings}
+                  sidebarSettings={sidebarSettings ?? { topBarHeight: { value: 0 }, navBarHeight: { value: 0 } }}
                   contentPadding={contentPadding}
-                  theme={theme}
                   isActive={interfaceSettings.navBar}
                   collapseLength={collapseLength / 1000}
                   minHeight={0}
-                  maxHeight={sidebarSettings.navBarHeight.value - contentPadding}
+                  maxHeight={(sidebarSettings?.navBarHeight?.value ?? 0) - contentPadding}
                 />
               </Page>
             </Card>

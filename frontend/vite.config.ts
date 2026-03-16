@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import inject from '@rollup/plugin-inject';
+import path from 'path';
 
 export default defineConfig({
   plugins: [
@@ -29,6 +30,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@': path.resolve(__dirname, './src'),
       stream: 'stream-browserify',
       buffer: 'buffer',
       events: 'events',

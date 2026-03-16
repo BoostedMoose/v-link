@@ -57,6 +57,16 @@ jobs:
         working-directory: frontend
         run: npm ci --legacy-peer-deps
 
+      - name: TypeScript type check
+        working-directory: frontend
+        run: npm run typecheck
+        continue-on-error: true
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+        continue-on-error: true
+
       - name: Run frontend tests
         working-directory: frontend
         run: npm test

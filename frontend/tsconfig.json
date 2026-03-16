@@ -16,7 +16,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "types": ["react", "react-dom"],
-    "typeRoots": ["types", "node_modules/@types"]
+    "typeRoots": ["types", "node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   },
   "include": ["src", "types", "src/store"]
 }

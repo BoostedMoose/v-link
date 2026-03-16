@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useNamespaces } from '../../socket/Namespaces';
-import { openModal, closeModal } from '../../app/components/Modal';
+import { useNamespaces } from '@/socket/Namespaces';
+import { openModal, closeModal } from '@/app/components/Modal';
 
 
 const socket = useNamespaces();
