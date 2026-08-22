@@ -45,6 +45,9 @@ python /home/$USER/v-link/V-Link.py
 
 #Advanced Options:
 python /home/$USER/v-link/V-Link.py -h
+
+#Test the automatic compact layout in a window:
+python /home/$USER/v-link/V-Link.py --nokiosk --window-size 400x234
 ```
 
 ## Wiki

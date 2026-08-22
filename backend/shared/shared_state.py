@@ -30,6 +30,7 @@ class SharedState:
 
         #Display
         self.isKiosk = True
+        self.browserWindowSize = (1280, 720)
         self.rtiStatus = False
         self.hdmiStatus = False
 

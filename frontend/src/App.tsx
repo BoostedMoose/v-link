@@ -13,6 +13,8 @@ import Init from './app/Init';
 import Splash from './app/Splash';
 import Content from './app/Content';
 import { Modal } from './app/components/Modal';
+import { isCompactViewport, smallestViewport } from './app/helper/Layout';
+import type { ViewportSize } from './app/helper/Layout';
 
 
 import Carplay from './carplay/Carplay';
@@ -22,14 +24,25 @@ import './App.css';
 import './theme/fonts.module.css';
 
 const AppContainer = styled.div`
-  position: absolute;
+  position: fixed;
+  top: 0;
+  left: 0;
   overflow: hidden;
   width: 100%;
   height: 100%;
+  box-sizing: border-box;
   background: linear-gradient(180deg, #0D0D0D, #1C1C1C);
 `;
 
 const BACKGROUND_MEDIA_COMMANDS = new Set(['next', 'prev']);
+
+const browserViewportSize = (): ViewportSize => smallestViewport(
+  { width: window.innerWidth, height: window.innerHeight },
+  window.visualViewport
+    ? { width: window.visualViewport.width, height: window.visualViewport.height }
+    : undefined,
+  { width: window.screen.width, height: window.screen.height },
+);
 
 function App() {
   // Subscribe to store slices
@@ -63,6 +76,17 @@ function App() {
 
   const [commandCounter, setCommandCounter] = useState(0);
   const [keyCommand, setKeyCommand] = useState('');
+  const [viewportSize, setViewportSize] = useState(browserViewportSize);
+
+  useEffect(() => {
+    const updateViewportSize = () => setViewportSize(browserViewportSize());
+    window.addEventListener('resize', updateViewportSize);
+    window.visualViewport?.addEventListener('resize', updateViewportSize);
+    return () => {
+      window.removeEventListener('resize', updateViewportSize);
+      window.visualViewport?.removeEventListener('resize', updateViewportSize);
+    };
+  }, []);
 
   useEffect(() => {
     document.addEventListener('keydown', mmiKeyDown);
@@ -118,9 +142,17 @@ function App() {
           const el            = containerRef.current as HTMLDivElement;
           const containerWidth  = el.offsetWidth;
           const containerHeight = el.offsetHeight;
-          const carplayHeight   = topBarEnabled ? containerHeight - topBarHeight : containerHeight;
+          const compact          = isCompactViewport({ width: containerWidth, height: containerHeight });
+          const carplayHeight    = !compact && topBarEnabled
+            ? containerHeight - topBarHeight
+            : containerHeight;
 
-          socket.log.emit('info', `Window size changed: ${containerWidth}x${containerHeight}, CarPlay: ${containerWidth}x${carplayHeight}`)
+          const visualWidth = Math.floor(window.visualViewport?.width ?? window.innerWidth);
+          const visualHeight = Math.floor(window.visualViewport?.height ?? window.innerHeight);
+          socket.log.emit(
+            'info',
+            `Viewport: app=${containerWidth}x${containerHeight}, layout=${window.innerWidth}x${window.innerHeight}, visual=${visualWidth}x${visualHeight}, screen=${window.screen.width}x${window.screen.height}, dpr=${window.devicePixelRatio}; CarPlay=${containerWidth}x${carplayHeight}`,
+          );
 
           appUpdate((state) => {
             state.system.windowSize.width  = containerWidth;
@@ -141,7 +173,10 @@ function App() {
 
   return (
     <StyleSheetManager shouldForwardProp={isPropValid}>
-      <AppContainer ref={containerRef}>
+      <AppContainer
+        ref={containerRef}
+        style={{ width: viewportSize.width, height: viewportSize.height }}
+      >
         <Socket />
 
         <ThemeProvider theme={scaledTheme}>
