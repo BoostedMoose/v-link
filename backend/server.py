@@ -33,6 +33,10 @@ socketio = SocketIO(server, cors_allowed_origins='*', async_mode='eventlet')
 modules = ['app', 'mmi', 'can', 'swc', 'adc', 'rti', 'mst', 'rearcam']
 
 
+def _valid_backlight_step(value):
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 16
+
+
 class ServerThread(threading.Thread):
     def __init__(self, logger):
         super().__init__()
@@ -163,9 +167,18 @@ class ServerThread(threading.Thread):
                 settings.save_settings(module, data)
                 if module == "app":
                     try:
-                        shared_state.backlight_daylight = data.get('daylight_backlight', {}).get('value', shared_state.backlight_daylight)
-                        shared_state.backlight_darkness = data.get('darkness_backlight', {}).get('value', shared_state.backlight_darkness)
-                        shared_state.backlight_auto_enabled = data.get('auto_backlight', {}).get('autoOpen', {}).get('value', shared_state.backlight_auto_enabled)
+                        manual = data.get('manual_backlight', {}).get('value')
+                        daylight = data.get('daylight_backlight', {}).get('value')
+                        darkness = data.get('darkness_backlight', {}).get('value')
+                        auto_enabled = data.get('auto_backlight', {}).get('autoOpen', {}).get('value')
+                        if _valid_backlight_step(manual):
+                            shared_state.backlight_manual = manual
+                        if _valid_backlight_step(daylight):
+                            shared_state.backlight_daylight = daylight
+                        if _valid_backlight_step(darkness):
+                            shared_state.backlight_darkness = darkness
+                        if isinstance(auto_enabled, bool):
+                            shared_state.backlight_auto_enabled = auto_enabled
                     except Exception as e:
                         logger.error(f'[Settings] Error updating backlight shared state from save: {e}')
 
@@ -224,14 +237,19 @@ class ServerThread(threading.Thread):
             if not isinstance(data, dict):
                 return
             try:
+                if 'manual' in data and _valid_backlight_step(data['manual']):
+                    shared_state.backlight_manual = data['manual']
                 if 'daylight' in data:
-                    shared_state.backlight_daylight = data['daylight']
+                    if _valid_backlight_step(data['daylight']):
+                        shared_state.backlight_daylight = data['daylight']
                 if 'darkness' in data:
-                    shared_state.backlight_darkness = data['darkness']
-                if 'auto_enabled' in data:
+                    if _valid_backlight_step(data['darkness']):
+                        shared_state.backlight_darkness = data['darkness']
+                if 'auto_enabled' in data and isinstance(data['auto_enabled'], bool):
                     shared_state.backlight_auto_enabled = data['auto_enabled']
                 logger.info(
-                    f"[Backlight] daylight={shared_state.backlight_daylight} "
+                    f"[Backlight] manual={shared_state.backlight_manual} "
+                    f"daylight={shared_state.backlight_daylight} "
                     f"darkness={shared_state.backlight_darkness} "
                     f"auto_enabled={shared_state.backlight_auto_enabled}"
                 )

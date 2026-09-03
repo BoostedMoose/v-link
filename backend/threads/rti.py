@@ -55,7 +55,8 @@ class RTIThread(threading.Thread):
                         self.write(0x46)
 
                     byte, _changed, _mode = self._backlight.update()
-                    self.write(byte)
+                    if byte is not None:
+                        self.write(byte)
                     self.write(0x83)
                 except Exception as e:
                     self.logger.error(f'[RTI] Error during operation: {e}')

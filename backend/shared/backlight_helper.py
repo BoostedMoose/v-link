@@ -4,22 +4,10 @@ from .shared_state import shared_state
 
 
 # ============================================================
-# Backlight levels table (16 steps, 1:1 index)
-# The logical index is (slider - 1)
-# ============================================================
-
-BACKLIGHT_LEVELS = [
-    0x20, 0x61, 0x62, 0x23,
-    0x64, 0x25, 0x26, 0x67,
-    0x68, 0x29, 0x2A, 0x2C,
-    0x6B, 0x6D, 0x6E, 0x2F,
-]
-
-
-# ============================================================
 # Defaults
 # ============================================================
 
+DEFAULT_MANUAL = {"value": 15, "min": 1, "max": 16}
 DEFAULT_DAYLIGHT = {"value": 15, "min": 1, "max": 16}
 DEFAULT_DARKNESS = {"value": 5,  "min": 1, "max": 16}
 DEFAULT_AUTO = True
@@ -47,12 +35,29 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
-def level_from_step(step: int) -> int:
-    """
-    step: slider value (1–16)
-    """
-    index = clamp(step - 1, 0, len(BACKLIGHT_LEVELS) - 1)
-    return BACKLIGHT_LEVELS[index]
+def load_brightness_levels():
+    """Load and validate the ordered brightness command table from rti.json."""
+    rti = settings.load_settings("rti") or {}
+    raw_levels = rti.get("commands", {}).get("brightness", [])
+    if not isinstance(raw_levels, list):
+        return []
+
+    levels = []
+    try:
+        for raw_level in raw_levels:
+            if isinstance(raw_level, str):
+                level = int(raw_level, 0)
+            elif isinstance(raw_level, int) and not isinstance(raw_level, bool):
+                level = raw_level
+            else:
+                return []
+            if not 0 <= level <= 0xFF:
+                return []
+            levels.append(level)
+    except (TypeError, ValueError):
+        return []
+
+    return levels
 
 
 # ============================================================
@@ -87,16 +92,24 @@ def _read_toggle_setting(app, key, nested_key, default):
 
 
 def load_backlight_config():
+    runtime_manual = getattr(shared_state, "backlight_manual", None)
     runtime_daylight = getattr(shared_state, "backlight_daylight", None)
     runtime_darkness = getattr(shared_state, "backlight_darkness", None)
     runtime_auto = getattr(shared_state, "backlight_auto_enabled", None)
 
     # Only read from disk if shared_state hasn't been initialized yet.
-    if not isinstance(runtime_daylight, (int, float)) or not isinstance(runtime_darkness, (int, float)) or not isinstance(runtime_auto, bool):
+    if not isinstance(runtime_manual, (int, float)) or not isinstance(runtime_daylight, (int, float)) or not isinstance(runtime_darkness, (int, float)) or not isinstance(runtime_auto, bool):
         app = settings.load_settings("app") or {}
+        manual = _read_range_setting(app, "manual_backlight", DEFAULT_MANUAL)
         daylight = _read_range_setting(app, "daylight_backlight", DEFAULT_DAYLIGHT)
         darkness = _read_range_setting(app, "darkness_backlight", DEFAULT_DARKNESS)
         auto_enabled = _read_toggle_setting(app, "auto_backlight", "autoOpen", DEFAULT_AUTO)
+
+        if not isinstance(runtime_manual, (int, float)):
+            shared_state.backlight_manual = manual["value"]
+            runtime_manual = manual["value"]
+        else:
+            manual["value"] = runtime_manual
 
         if not isinstance(runtime_daylight, (int, float)):
             shared_state.backlight_daylight = daylight["value"]
@@ -114,11 +127,13 @@ def load_backlight_config():
             shared_state.backlight_auto_enabled = auto_enabled
             runtime_auto = auto_enabled
     else:
+        manual = {**DEFAULT_MANUAL, "value": runtime_manual}
         daylight = {**DEFAULT_DAYLIGHT, "value": runtime_daylight}
         darkness = {**DEFAULT_DARKNESS, "value": runtime_darkness}
         auto_enabled = runtime_auto
 
     return {
+        "manual": manual,
         "daylight": daylight,
         "darkness": darkness,
         "auto": auto_enabled,
@@ -165,11 +180,16 @@ class LightStateHysteresis:
 # ============================================================
 
 class BacklightMapper:
-    def __init__(self):
+    def __init__(self, levels):
+        self._levels = levels
         self._last_byte = None
 
     def map(self, step: int):
-        byte = level_from_step(step)
+        if not self._levels:
+            return None, False
+
+        index = clamp(int(step) - 1, 0, len(self._levels) - 1)
+        byte = self._levels[index]
         changed = byte != self._last_byte
         if changed:
             self._last_byte = byte
@@ -187,13 +207,14 @@ class BacklightController:
     - Reads CAN (shared state)
     - Decides if it's dark
     - Applies temporal hysteresis
-    - Selects day/night profile
+    - Selects the manual or automatic day/night profile
     - Translates slider -> byte
     - Detects changes
     """
 
-    def __init__(self):
-        self._mapper = BacklightMapper()
+    def __init__(self, brightness_levels=None):
+        levels = load_brightness_levels() if brightness_levels is None else brightness_levels
+        self._mapper = BacklightMapper(levels)
         self._light_state = LightStateHysteresis(HOLD_TIME_S)
 
     # --------------------------------------------------------
@@ -270,8 +291,8 @@ class BacklightController:
 
         # 3. Profile selection
         if not cfg["auto"]:
-            profile = cfg["daylight"]
-            mode = "day"
+            profile = cfg["manual"]
+            mode = "manual"
         else:
             if state == "night":
                 profile = cfg["darkness"]

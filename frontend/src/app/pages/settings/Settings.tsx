@@ -487,6 +487,9 @@ const Settings = () => {
         if (key === 'daylight_backlight') {
           socket.app.emit('backlight:update', { daylight: newValue });
         }
+        if (key === 'manual_backlight') {
+          socket.app.emit('backlight:update', { manual: newValue });
+        }
         if (key === 'darkness_backlight') {
           socket.app.emit('backlight:update', { darkness: newValue });
         }
@@ -796,8 +799,9 @@ const Settings = () => {
             <Element>
               <Title>Backlight Settings</Title>
             </Element>
-            {renderSetting("daylight_backlight", currentSettings)}
             {renderSetting("auto_backlight", currentSettings)}
+            {renderSetting("manual_backlight", currentSettings)}
+            {renderSetting("daylight_backlight", currentSettings)}
             {renderSetting("darkness_backlight", currentSettings)}
 
             {settings.constants.modules.rti &&

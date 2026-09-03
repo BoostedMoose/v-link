@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styled, { useTheme } from 'styled-components';
 
 import { openModal } from '@/app/components/Modal';
-import { APP, useThemeColor } from '@/store/Store';
+import { APP, RTI, useThemeColor } from '@/store/Store';
 import { useNamespaces } from '@/socket/Namespaces';
+import CompactDisplaySettings from './CompactDisplaySettings';
 
 const Container = styled.div`
   width: 100%;
@@ -93,8 +94,13 @@ const CompactSettings = () => {
     (state.settings.constants as { modules?: { rti?: boolean } } | undefined)?.modules?.rti ?? false
   );
   const rtiState = APP((state) => state.system.rtiState);
+  const brightnessSupported = RTI((state) => {
+    const commands = state.settings.commands as { brightness?: unknown } | undefined;
+    return Array.isArray(commands?.brightness) && commands.brightness.length > 0;
+  });
   const themeColor = useThemeColor();
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [page, setPage] = useState<'menu' | 'display'>('menu');
 
   const navigate = useCallback((view: 'Dashboard' | 'Carplay') => {
     appUpdate((state) => {
@@ -118,10 +124,17 @@ const CompactSettings = () => {
     const items: CompactAction[] = [
       { id: 'dashboard', label: 'DASHBOARD', icon: 'dashboard', run: () => navigate('Dashboard') },
       { id: 'carplay', label: 'CARPLAY', icon: 'carplay', run: () => navigate('Carplay') },
+    ];
+
+    if (rtiEnabled && brightnessSupported) {
+      items.push({ id: 'display', label: 'DISPLAY', icon: 'brightness', run: () => setPage('display') });
+    }
+
+    items.push(
       { id: 'restart', label: 'RESTART V-LINK', icon: 'restart', run: () => runSystemTask('restart') },
       { id: 'quit', label: 'QUIT V-LINK', icon: 'quit', danger: true, run: () => runSystemTask('quit') },
       { id: 'reboot', label: 'REBOOT PI', icon: 'system', danger: true, run: () => runSystemTask('reboot') },
-    ];
+    );
 
     if (rtiEnabled) {
       items.push({
@@ -132,7 +145,7 @@ const CompactSettings = () => {
       });
     }
     return items;
-  }, [navigate, rtiEnabled, rtiState, runSystemTask, socket.sys]);
+  }, [brightnessSupported, navigate, rtiEnabled, rtiState, runSystemTask, socket.sys]);
   const actionsRef = useRef(actions);
   const selectedIndexRef = useRef(selectedIndex);
   actionsRef.current = actions;
@@ -143,7 +156,7 @@ const CompactSettings = () => {
   }, [actions.length]);
 
   useEffect(() => {
-    if (!keyStroke || actionsRef.current.length === 0) return;
+    if (page !== 'menu' || !keyStroke || actionsRef.current.length === 0) return;
 
     if (keyStroke === appBindings?.left?.value) {
       setSelectedIndex((current) => (current - 1 + actionsRef.current.length) % actionsRef.current.length);
@@ -158,7 +171,11 @@ const CompactSettings = () => {
       keyStroke === 'NumpadEnter' ||
       keyStroke === dongleBindings?.selectDown?.value;
     if (isConfirm) actionsRef.current[selectedIndexRef.current]?.run();
-  }, [appBindings?.left?.value, appBindings?.right?.value, dongleBindings?.selectDown?.value, keyStroke]);
+  }, [appBindings?.left?.value, appBindings?.right?.value, dongleBindings?.selectDown?.value, keyStroke, page]);
+
+  if (page === 'display') {
+    return <CompactDisplaySettings onBack={() => setPage('menu')} />;
+  }
 
   return (
     <Container aria-label="Compact settings">
