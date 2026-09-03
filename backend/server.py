@@ -168,15 +168,9 @@ class ServerThread(threading.Thread):
                 if module == "app":
                     try:
                         manual = data.get('manual_backlight', {}).get('value')
-                        daylight = data.get('daylight_backlight', {}).get('value')
-                        darkness = data.get('darkness_backlight', {}).get('value')
                         auto_enabled = data.get('auto_backlight', {}).get('autoOpen', {}).get('value')
                         if _valid_backlight_step(manual):
                             shared_state.backlight_manual = manual
-                        if _valid_backlight_step(daylight):
-                            shared_state.backlight_daylight = daylight
-                        if _valid_backlight_step(darkness):
-                            shared_state.backlight_darkness = darkness
                         if isinstance(auto_enabled, bool):
                             shared_state.backlight_auto_enabled = auto_enabled
                     except Exception as e:
@@ -239,18 +233,10 @@ class ServerThread(threading.Thread):
             try:
                 if 'manual' in data and _valid_backlight_step(data['manual']):
                     shared_state.backlight_manual = data['manual']
-                if 'daylight' in data:
-                    if _valid_backlight_step(data['daylight']):
-                        shared_state.backlight_daylight = data['daylight']
-                if 'darkness' in data:
-                    if _valid_backlight_step(data['darkness']):
-                        shared_state.backlight_darkness = data['darkness']
                 if 'auto_enabled' in data and isinstance(data['auto_enabled'], bool):
                     shared_state.backlight_auto_enabled = data['auto_enabled']
                 logger.info(
                     f"[Backlight] manual={shared_state.backlight_manual} "
-                    f"daylight={shared_state.backlight_daylight} "
-                    f"darkness={shared_state.backlight_darkness} "
                     f"auto_enabled={shared_state.backlight_auto_enabled}"
                 )
             except Exception as e:

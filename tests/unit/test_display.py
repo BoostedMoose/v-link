@@ -120,12 +120,12 @@ class TestBacklightCanData:
         original_car_data = _vmod.shared_state.car_data
         try:
             _vmod.shared_state.car_data = {
-                'data': {'light': '0.80'},
+                'data': {'dashboard_brightness': '1.00'},
                 'pollingrate': {},
                 'timestamp': None,
             }
 
-            assert BacklightController()._mode_from_can() == 'night'
+            assert BacklightController()._dashboard_level_from_can() == 1
         finally:
             _vmod.shared_state.car_data = original_car_data
 
@@ -134,9 +134,9 @@ class TestBacklightCanData:
 
         original_car_data = _vmod.shared_state.car_data
         try:
-            _vmod.shared_state.car_data = {'light': 3.0}
+            _vmod.shared_state.car_data = {'dashboard_brightness': 16.0}
 
-            assert BacklightController()._mode_from_can() == 'day'
+            assert BacklightController()._dashboard_level_from_can() == 16
         finally:
             _vmod.shared_state.car_data = original_car_data
 

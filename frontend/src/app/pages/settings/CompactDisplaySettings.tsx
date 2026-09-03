@@ -252,7 +252,7 @@ const CompactDisplaySettings = ({ onBack }: CompactDisplaySettingsProps) => {
       <Header>
         <span>DISPLAY BRIGHTNESS</span>
         <Mode $automatic={automatic} $accent={accent}>
-          {automatic ? 'Automatic · LS CAN' : 'Manual'}
+          {automatic ? 'Follow dashboard · HS CAN' : 'Manual'}
         </Mode>
       </Header>
 
@@ -269,7 +269,7 @@ const CompactDisplaySettings = ({ onBack }: CompactDisplaySettingsProps) => {
           <BrightnessIcon $accent={accent} aria-hidden="true">
             <use href="/assets/svg/buttons/brightness.svg#brightness" />
           </BrightnessIcon>
-          <LevelLabel>FIXED LEVEL</LevelLabel>
+          <LevelLabel>{automatic ? 'FALLBACK LEVEL' : 'FIXED LEVEL'}</LevelLabel>
           <Level>LEVEL {level} / {max}</Level>
           <Segments aria-hidden="true">
             {Array.from({ length: max }, (_, index) => (
@@ -292,7 +292,7 @@ const CompactDisplaySettings = ({ onBack }: CompactDisplaySettingsProps) => {
           BACK
         </FooterButton>
         <FooterButton $accent={accent} $active={automatic} onClick={toggleAutomatic}>
-          {automatic ? 'AUTOMATIC: ON' : 'AUTOMATIC: OFF'}
+          {automatic ? 'FOLLOW DASH: ON' : 'FOLLOW DASH: OFF'}
         </FooterButton>
       </Footer>
     </Container>

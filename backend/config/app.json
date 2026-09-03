@@ -121,34 +121,18 @@
       "label": "Open Screen on Start"
     }
   },
-  "daylight_backlight": {
-    "ui": "range",
-    "label": "Day Brightness Level",
-    "value": 15,
-    "min": 1,
-    "max": 16,
-    "step": 1
-  },
   "auto_backlight": {
     "title": "Brightness Mode",
     "type": "system",
     "autoOpen": {
       "value": true,
-      "label": "Automatic (requires LS CAN)"
+      "label": "Follow Dashboard (requires HS CAN)"
     }
   },
   "manual_backlight": {
     "ui": "range",
-    "label": "Manual Brightness Level",
+    "label": "Manual / Fallback Brightness Level",
     "value": 15,
-    "min": 1,
-    "max": 16,
-    "step": 1
-  },
-  "darkness_backlight": {
-    "ui": "range",
-    "label": "Night Brightness Level",
-    "value": 5,
     "min": 1,
     "max": 16,
     "step": 1

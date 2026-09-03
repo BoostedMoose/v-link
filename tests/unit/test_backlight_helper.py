@@ -13,19 +13,15 @@ BRIGHTNESS_STRINGS = [
 BRIGHTNESS_BYTES = [int(value, 0) for value in BRIGHTNESS_STRINGS]
 
 
-def _app_settings(*, manual=15, daylight=15, darkness=5, automatic=True):
+def _app_settings(*, manual=15, automatic=True):
     return {
         "manual_backlight": {"value": manual, "min": 1, "max": 16},
-        "daylight_backlight": {"value": daylight, "min": 1, "max": 16},
-        "darkness_backlight": {"value": darkness, "min": 1, "max": 16},
         "auto_backlight": {"autoOpen": {"value": automatic}},
     }
 
 
 def _reset_runtime():
     shared_state.backlight_manual = None
-    shared_state.backlight_daylight = None
-    shared_state.backlight_darkness = None
     shared_state.backlight_auto_enabled = None
     shared_state.backlight_byte = None
     shared_state.car_data = {
@@ -39,8 +35,6 @@ def _reset_runtime():
 def reset_shared_backlight_state():
     original = (
         shared_state.backlight_manual,
-        shared_state.backlight_daylight,
-        shared_state.backlight_darkness,
         shared_state.backlight_auto_enabled,
         shared_state.backlight_byte,
         shared_state.car_data,
@@ -49,8 +43,6 @@ def reset_shared_backlight_state():
     yield
     (
         shared_state.backlight_manual,
-        shared_state.backlight_daylight,
-        shared_state.backlight_darkness,
         shared_state.backlight_auto_enabled,
         shared_state.backlight_byte,
         shared_state.car_data,
@@ -84,8 +76,7 @@ def test_invalid_or_missing_profile_table_disables_brightness(monkeypatch):
     assert backlight_helper.BacklightController().update() == (None, False, "manual")
 
 
-def test_maps_all_logical_steps_to_profile_commands(monkeypatch):
-    _reset_runtime()
+def test_maps_all_manual_steps_to_profile_commands(monkeypatch):
     monkeypatch.setattr(
         backlight_helper.settings,
         "load_settings",
@@ -101,13 +92,27 @@ def test_maps_all_logical_steps_to_profile_commands(monkeypatch):
         assert mode == "manual"
 
 
-def test_manual_mode_ignores_can_light_state(monkeypatch):
-    _reset_runtime()
-    shared_state.car_data["data"]["light"] = 0.0
+@pytest.mark.parametrize("level", range(1, 17))
+def test_automatic_mode_follows_all_dashboard_levels(monkeypatch, level):
+    shared_state.car_data["data"]["dashboard_brightness"] = f"{level:.2f}"
     monkeypatch.setattr(
         backlight_helper.settings,
         "load_settings",
-        lambda name: _app_settings(manual=16, darkness=1, automatic=False) if name == "app" else {},
+        lambda name: _app_settings(manual=7, automatic=True) if name == "app" else {},
+    )
+
+    byte, _changed, mode = backlight_helper.BacklightController(BRIGHTNESS_BYTES).update()
+
+    assert byte == BRIGHTNESS_BYTES[level - 1]
+    assert mode == "automatic"
+
+
+def test_manual_mode_ignores_dashboard_brightness(monkeypatch):
+    shared_state.car_data["data"]["dashboard_brightness"] = "1.00"
+    monkeypatch.setattr(
+        backlight_helper.settings,
+        "load_settings",
+        lambda name: _app_settings(manual=16, automatic=False) if name == "app" else {},
     )
 
     byte, _changed, mode = backlight_helper.BacklightController(BRIGHTNESS_BYTES).update()
@@ -116,15 +121,17 @@ def test_manual_mode_ignores_can_light_state(monkeypatch):
     assert mode == "manual"
 
 
-def test_automatic_mode_uses_daylight_when_sensor_is_unavailable(monkeypatch):
-    _reset_runtime()
+@pytest.mark.parametrize("dashboard_value", [None, "invalid", "0.00", "17.00", "1.50"])
+def test_automatic_mode_uses_manual_fallback_for_invalid_dashboard_level(monkeypatch, dashboard_value):
+    if dashboard_value is not None:
+        shared_state.car_data["data"]["dashboard_brightness"] = dashboard_value
     monkeypatch.setattr(
         backlight_helper.settings,
         "load_settings",
-        lambda name: _app_settings(daylight=3, automatic=True) if name == "app" else {},
+        lambda name: _app_settings(manual=3, automatic=True) if name == "app" else {},
     )
 
     byte, _changed, mode = backlight_helper.BacklightController(BRIGHTNESS_BYTES).update()
 
     assert byte == BRIGHTNESS_BYTES[2]
-    assert mode == "day"
+    assert mode == "automatic-fallback"

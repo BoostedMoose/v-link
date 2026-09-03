@@ -49,7 +49,7 @@ describe('CompactSettings controls', () => {
         auto_backlight: {
           title: 'Brightness Mode',
           type: 'system',
-          autoOpen: { value: true, label: 'Automatic (requires LS CAN)' },
+          autoOpen: { value: true, label: 'Follow Dashboard (requires HS CAN)' },
         },
         constants: { modules: { rti: false } },
       },
