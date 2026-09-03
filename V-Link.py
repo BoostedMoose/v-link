@@ -26,22 +26,29 @@ import subprocess
 def activate_venv():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     venv_path = os.path.join(script_dir, 'venv')
-    activate_script = os.path.join(venv_path, 'bin', 'activate')
+    python_bin = os.path.join(venv_path, 'bin', 'python')
 
-    if not os.path.exists(activate_script):
-        sys.stderr.write(f'[V-Link] Activation script for venv not found: {activate_script}\n')
+    if not os.path.exists(python_bin):
+        sys.stderr.write(f'[V-Link] Python interpreter for venv not found: {python_bin}\n')
         sys.stderr.write('[V-Link] Please ensure the virtual environment is set up correctly. Exiting...\n')
-        sys.exit(0)
+        sys.exit(1)
 
-    os.system(f'. {activate_script}')
+    if os.path.abspath(sys.prefix) == os.path.abspath(venv_path):
+        return
 
-    # Update PATH to include the virtual environment
-    os.environ['PATH'] = os.path.join(venv_path, 'bin') + os.pathsep + os.environ.get('PATH', '')
-    # Add site-packages to sys.path
-    site_packages = os.path.join(venv_path, 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
-    sys.path.insert(0, site_packages)
+    env = os.environ.copy()
+    env['VIRTUAL_ENV'] = venv_path
+    env['PATH'] = os.path.join(venv_path, 'bin') + os.pathsep + env.get('PATH', '')
+    env.pop('PYTHONHOME', None)
 
-activate_venv()
+    os.execve(
+        python_bin,
+        [python_bin, os.path.abspath(__file__), *sys.argv[1:]],
+        env,
+    )
+
+if __name__ == '__main__':
+    activate_venv()
 
 import threading
 import time

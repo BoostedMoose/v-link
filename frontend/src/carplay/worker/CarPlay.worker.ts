@@ -4,6 +4,8 @@ import CarplayWeb, {
   SendAudio,
   SendCommand,
   SendTouch,
+  PhoneType,
+  Plugged,
   findDevice,
 } from 'node-carplay/web'
 import { AudioPlayerKey, Command, KeyCommand } from "./types";
@@ -14,6 +16,32 @@ import { createAudioPlayerKey } from './utils'
 //This shouldn't be here, try to fix vite.config.ts.....
 import { Buffer } from 'buffer';
 self.Buffer = Buffer;
+
+const diagnosticPrefixes = [
+  '[CarPlay] BoxSettings:',
+  '[CarPlay Dongle] BoxInfo:',
+  '[CarPlay Dongle] Firmware:',
+  '[CarPlay USB]',
+]
+const workerConsoleInfo = console.info.bind(console)
+
+console.info = (...args: unknown[]) => {
+  workerConsoleInfo(...args)
+
+  if (typeof args[0] !== 'string' || !diagnosticPrefixes.includes(args[0])) return
+
+  const message = args.map(value => {
+    if (typeof value === 'string') return value
+
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return String(value)
+    }
+  }).join(' ')
+
+  postMessage({ type: 'diagnostic', message })
+}
 
 let carplayWeb: CarplayWeb | null = null
 let videoPort: MessagePort | null = null
@@ -88,6 +116,14 @@ const startProjection = async (nextConfig: Partial<DongleConfig>) => {
   const next = new CarplayWeb(config)
   carplayWeb = next
   next.onmessage = handleMessage
+  next.dongleDriver.on('message', message => {
+    if (!(message instanceof Plugged)) return
+
+    const source = message.phoneType === PhoneType.AndroidAuto || message.phoneType === PhoneType.AndroidMirror
+      ? 'Android Auto'
+      : 'CarPlay'
+    postMessage({ type: 'projectionSource', source })
+  })
 
   try {
     await withoutUsbReset(device, () => next.start(device))
@@ -137,6 +173,7 @@ const handleMessage = (message: CarplayMessage) => {
       try {
         audioBuffers[audioKey].push(payload.data)
       } catch {
+        // Drop audio frames when the ring buffer cannot accept more data.
       }
     } else {
       if (!pendingAudio[audioKey]) {

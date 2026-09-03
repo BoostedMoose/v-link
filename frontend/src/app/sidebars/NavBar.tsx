@@ -119,10 +119,12 @@ const NavBar = ({ isHovering }: NavBarProps) => {
   const currentView   = APP((state) => state.system.view);
   const navBarHeight  = APP((state) => (state.settings.side_bars as SideBarsSettings | undefined)?.navBarHeight?.value ?? 50);
 
-  const enabled       = APP((state) => state.settings.reverseCam as { enabled?: { value: boolean } } | undefined)?.enabled?.value;
+  const rearcamEnabled = APP((state) => state.settings.reverseCam as { enabled?: { value: boolean } } | undefined)?.enabled?.value;
+  const dashboardEnabled = APP((state) => state.settings.dashboard as { enabled?: { value: boolean } } | undefined)?.enabled?.value;
 
   const viewEnabled: Partial<Record<string, boolean>> = {
-    Rearcam: enabled,
+    Dashboard: dashboardEnabled ?? true,
+    Rearcam: rearcamEnabled,
   };
 
   const handleClick = () => {
@@ -137,7 +139,7 @@ const NavBar = ({ isHovering }: NavBarProps) => {
         </GlowLarge>
       </Indicator>
       <Navbar navBarHeight={navBarHeight} isActive={isActive}>
-        {['Dashboard', 'Carplay', 'Rearcam', 'Settings'].filter((view) => viewEnabled[view] !== false).map((view) => (
+        {['Dashboard','Music', 'Carplay', 'Rearcam', 'Settings'].filter((view) => viewEnabled[view] !== false).map((view) => (
           <div className="column" key={view} style={{ position: 'relative', width: '100%'}}>
             <NavButton onClick={() => {
               appUpdate((state) => { state.system.view = view })

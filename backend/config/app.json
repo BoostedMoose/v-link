@@ -73,6 +73,30 @@
       "value": false
     }
   },
+  "audio": {
+    "title": "Audio Settings",
+    "type": "system",
+    "autoplayLocalMedia": {
+      "value": false,
+      "label": "Play Local Media on Startup"
+    },
+    "navigationVolume": {
+      "value": 80,
+      "label": "Navigation Volume"
+    },
+    "callVolume": {
+      "value": 85,
+      "label": "Call Volume"
+    },
+    "navigationDuckingAmount": {
+      "value": 80,
+      "label": "Navigation Ducking Intensity"
+    },
+    "microphoneGainDb": {
+      "value": 0,
+      "label": "Microphone Input Gain"
+    }
+  },
   "shutdown": {
     "title": "Auto Shutdown",
     "type": "system",
@@ -120,6 +144,14 @@
     "min": 1,
     "max": 10,
     "step": 1
+  },
+  "dashboard": {
+    "title": "Dashboard Settings",
+    "type": "system",
+    "enabled": {
+      "value": true,
+      "label": "Show in Navbar"
+    }
   },
   "reverseCam": {
     "title": "Reverse Camera Settings",

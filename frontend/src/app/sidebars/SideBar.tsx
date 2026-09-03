@@ -146,6 +146,24 @@ const SideBar = ({ collapseLength }: SideBarProps) => {
                     </div>
                 </Link>
                 <Link
+                    onClick={() => handleTabChange('audio')}
+                    isActive={currentTab === 'audio'}
+                    activeColor={theme.colors.light}
+                    inactiveColor={theme.colors.medium}>
+                    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', alignItems: 'left' }}>
+                        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '10px', width: '100%' }}>
+                            <IconMedium
+                                isActive={currentTab === 'audio'}
+                                activeColor={theme.colors.theme[themeColor].active}
+                                defaultColor={theme.colors.theme[themeColor].default}
+                                inactiveColor={theme.colors.medium}>
+                                <use xlinkHref={`/assets/svg/buttons/music.svg#music`}></use>
+                            </IconMedium>
+                            Audio
+                        </div>
+                    </div>
+                </Link>
+                <Link
                     onClick={() => handleTabChange('rearcam')}
                     isActive={currentTab === 'rearcam'}
                     activeColor={theme.colors.light}

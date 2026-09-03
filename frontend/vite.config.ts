@@ -22,6 +22,10 @@ export default defineConfig({
     },
   ],
   optimizeDeps: {
+    // pcm-ringbuf-player resolves its AudioWorklet relative to its own module.
+    // Pre-bundling moves PcmPlayer.js into .vite/deps without moving the
+    // worklet, leaving audio.worklet.js with a broken URL in preview mode.
+    exclude: ['pcm-ringbuf-player'],
     esbuildOptions: {
       define: {
         global: "globalThis",

@@ -11,6 +11,7 @@ from flask_socketio         import SocketIO
 from flask_cors             import CORS
 
 from .                      import settings
+from .media                 import media_api
 from .shared.shared_state   import shared_state
 
 from .threads.cam         import CAMThread
@@ -22,6 +23,7 @@ logger = logging.getLogger('vlink')
 # Flask configuration
 server = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist'), static_folder=os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist', 'assets'), static_url_path='/assets')
 server.config['SECRET_KEY'] = 'v-link'
+server.register_blueprint(media_api)
 CORS(server, resources={r'/*': {'origins': '*'}})
 
 # Socket.io configuration
@@ -130,7 +132,7 @@ class ServerThread(threading.Thread):
         response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
         response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
         return response
-    
+
     # Handle client connection
     @socketio.on('connect', namespace='/')
     def handle_connect():

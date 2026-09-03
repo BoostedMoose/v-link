@@ -12,7 +12,7 @@ import sys
 import types
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -28,7 +28,7 @@ def strip_ansi(s: str) -> str:
 # ─── Extra sys.modules mocks needed to import V-Link.py ───────────────────────
 # conftest.py already provides: lgpio, board, busio, adafruit_ads1x15, uinput
 # can, serial, socketio are real packages available via the production venv
-# (activate_venv() prepends venv/site-packages to sys.path at load time).
+# (tests/conftest.py ensures pytest runs with the venv interpreter).
 # Only mock libraries that require physical Pi hardware and aren't already covered.
 
 def _mock_module(name, **attrs):
@@ -52,8 +52,7 @@ _VLINK_PATH = Path(__file__).resolve().parents[2] / 'V-Link.py'
 def _load_vlink():
     spec = importlib.util.spec_from_file_location('vlink_main', str(_VLINK_PATH))
     mod = importlib.util.module_from_spec(spec)
-    with patch('sys.exit'):   # prevent activate_venv() from exiting if venv is absent
-        spec.loader.exec_module(mod)
+    spec.loader.exec_module(mod)
     return mod
 
 

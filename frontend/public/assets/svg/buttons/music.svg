@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="music" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <path d="M12 24V8l14-3v16" />
+  <circle cx="8" cy="24" r="4" />
+  <circle cx="22" cy="21" r="4" />
+</svg>

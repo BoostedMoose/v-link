@@ -12,6 +12,8 @@ import useCarplayAudio from './useCarplayAudio'
 import { useCarplayTouch } from './useCarplayTouch'
 import { InitEvent } from './worker/render/RenderEvents'
 import { transitionProjectionSession } from './sessionState'
+import { createEmptyCarplayMedia, hasCarplayMediaIdentityChanged, mergeCarplayMedia, playbackStatusFromAudioCommand } from './mediaState'
+import { CARPLAY_MEDIA_COMMAND_EVENT, type MediaCommand } from './mediaCommands'
 
 import { APP } from '@/store/Store';
 import hexToRGBA from '@/app/helper/HexToRGBA'
@@ -211,7 +213,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     return worker
   }, [])
 
-  const { processAudio, getAudioPlayer, startRecording, stopRecording } =
+  const { processAudio, getAudioPlayer, resetAudioRouting, startRecording, stopRecording } =
     useCarplayAudio(carplayWorker, micChannel.port2)
 
   const clearRetryTimeout = useCallback(() => {
@@ -338,12 +340,15 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           break
         case 'unplugged':
           clearStartupWatchdog()
+          resetAudioRouting()
           console.log('(CarPlay) Worker disconnected')
           socket.log.emit('debug', '(CarPlay) Worker Disconnected')
 
           appUpdate((state) => {
             transitionProjectionSession(state.system.carplay, { type: 'phoneDisconnected' })
             state.system.carplay.user = false;
+            state.system.carplay.source = null
+            state.system.carplay.media = createEmptyCarplayMedia()
 
             state.system.interface.content = true
           });
@@ -356,12 +361,45 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           console.log(`(CarPlay) Video message ${ev.data.count}: ${ev.data.bytes} bytes`)
           socket.log.emit('info', `(CarPlay) Video message ${ev.data.count}: ${ev.data.bytes} bytes`)
           break
-        case 'audio':
-          processAudio(ev.data.message)
+        case 'diagnostic':
+          console.info(ev.data.message)
           break
-        case 'media':
-          //TODO: implement
+        case 'projectionSource': {
+          const source = ev.data.source
+          appUpdate((state) => {
+            state.system.carplay.source = source
+          })
           break
+        }
+        case 'audio': {
+          const audio = ev.data.message
+          appUpdate((state) => {
+            state.system.carplay.media.playbackStatus = playbackStatusFromAudioCommand(
+              state.system.carplay.media.playbackStatus,
+              audio.command,
+            )
+          })
+          processAudio(audio)
+          break
+        }
+        case 'media': {
+          const payload = ev.data.message.payload
+
+          if (!payload) break
+
+          appUpdate((state) => {
+            const previousMedia = state.system.carplay.media
+            const nextMedia = mergeCarplayMedia(previousMedia, payload)
+            if (hasCarplayMediaIdentityChanged(previousMedia, nextMedia)) {
+              console.info(
+                `(CarPlay) Media changed: title=${JSON.stringify(nextMedia.title)} artist=${JSON.stringify(nextMedia.artist)}`,
+              )
+            }
+            state.system.carplay.media = nextMedia
+          })
+
+          break
+        }
         case 'command':
           const {
             message: { value },
@@ -407,7 +445,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           break
       }
     }
-  }, [armStartupWatchdog, carplayWorker, clearRetryTimeout, clearStartupWatchdog, getAudioPlayer, processAudio, renderWorker, startRecording, stopRecording])
+  }, [armStartupWatchdog, carplayWorker, clearRetryTimeout, clearStartupWatchdog, getAudioPlayer, processAudio, renderWorker, resetAudioRouting, startRecording, stopRecording])
 
   useEffect(() => {
     const element = mainElem?.current
@@ -425,6 +463,23 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     carplayWorker.postMessage({ type: 'keyCommand', command: command })
   }, [commandCounter]);
 
+  useEffect(() => {
+    const handleMediaCommand = (event: Event) => {
+      const command = (event as CustomEvent<MediaCommand>).detail
+      if (command === 'playOrPause') {
+        appUpdate((state) => {
+          const media = state.system.carplay.media
+          media.playbackStatus = media.playbackStatus > 0 ? 0 : 1
+        })
+      }
+      carplayWorker.postMessage({ type: 'keyCommand', command })
+      socket.log.emit('debug', `(CarPlay) Media command: ${command}`)
+    }
+
+    eventEmitter.addEventListener(CARPLAY_MEDIA_COMMAND_EVENT, handleMediaCommand)
+    return () => eventEmitter.removeEventListener(CARPLAY_MEDIA_COMMAND_EVENT, handleMediaCommand)
+  }, [carplayWorker, socket.log]);
+
   // Request a new frame when re-entering the CarPlay view so key commands resume
   useEffect(() => {
     if (view !== 'Carplay') return
@@ -434,6 +489,9 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   const checkDevice = useCallback(
     async (request: boolean = false) => {
       const device = request ? await requestDevice() : await findDevice()
+      appUpdate((state) => {
+        state.system.carplay.detectionComplete = true
+      })
       if (device) {
         const phase = APP.getState().system.carplay.phase
         appUpdate((state) => {
@@ -499,6 +557,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
         appUpdate((state) => {
           transitionProjectionSession(state.system.carplay, { type: 'dongleDisconnected' })
           state.system.carplay.user = false;
+          state.system.carplay.source = null
         });
       }, USB_DETACH_DEBOUNCE_MS)
     }

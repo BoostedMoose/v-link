@@ -9,13 +9,47 @@ Why mocks are needed:
 - Several threads import Pi-specific hardware libraries at module level (can, cam, adc)
 """
 
+import os
 import sys
 import types
 import shutil
 import json
 from pathlib import Path
 
+
+_APP_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _restart_in_test_venv():
+    """Restart pytest in the project venv when invoked from outside it."""
+    venv_path = _APP_ROOT / 'venv'
+    python_bin = venv_path / 'bin' / 'python'
+
+    if Path(sys.prefix).resolve() == venv_path.resolve():
+        return
+
+    if not python_bin.exists():
+        raise RuntimeError(f'Python interpreter for test venv not found: {python_bin}')
+
+    env = os.environ.copy()
+    env['VIRTUAL_ENV'] = str(venv_path)
+    env['PATH'] = str(python_bin.parent) + os.pathsep + env.get('PATH', '')
+    env.pop('PYTHONHOME', None)
+
+    os.execve(
+        python_bin,
+        [python_bin, '-m', 'pytest', *sys.argv[1:]],
+        env,
+    )
+
+
 import pytest
+
+
+def pytest_cmdline_main(config):
+    """Ensure a bare `pytest` command uses the project's virtual environment."""
+    del config
+    _restart_in_test_venv()
 
 # lgpio (Raspberry Pi GPIO via libgpiod)
 from tests.mocks import lgpio_mock
@@ -77,9 +111,6 @@ sys.modules['uinput'] = _uinput
 
 
 # Fixtures
-_APP_ROOT = Path(__file__).resolve().parent.parent
-
-
 @pytest.fixture()
 def temp_config_dir(tmp_path, monkeypatch):
     """

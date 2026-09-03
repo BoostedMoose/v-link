@@ -4,6 +4,7 @@ import {
   AudioData,
   TouchAction,
 } from 'node-carplay/web'
+import type { ProjectionSource } from '../mediaState'
 
 export type AudioPlayerKey = string & { __brand: 'AudioPlayerKey' }
 
@@ -13,6 +14,8 @@ export type CarplayWorkerMessage =
   | { data: { type: 'workerStarted' } }
   | { data: { type: 'failure'; message?: string } }
   | { data: { type: 'videoStats'; count: number; bytes: number } }
+  | { data: { type: 'diagnostic'; message: string } }
+  | { data: { type: 'projectionSource'; source: Exclude<ProjectionSource, null> } }
 
 export type InitialisePayload = {
   videoPort: MessagePort

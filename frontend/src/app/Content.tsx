@@ -7,6 +7,7 @@ const Fade = FadeBase as React.ComponentType<{ className?: string; fadeLength?: 
 import { APP } from '@/store/Store';
 
 import Dashboard from './pages/dashboard/Dashboard';
+import Music from './pages/music/Music';
 import Carplay from './pages/carplay/Carplay';
 import Rearcam from './pages/rearcam/Rearcam';
 import Settings from './pages/settings/Settings';
@@ -138,7 +139,7 @@ const NavBlocker = styled.div<NavBlockerProps>`
 `;
 
 const Content = () => {
-  const viewMap = { Dashboard, Carplay, Rearcam, Settings };
+  const viewMap = { Dashboard, Music, Carplay, Rearcam, Settings };
 
   const appUpdate         = APP((state) => state.update);
   const keyStroke         = APP((state) => state.keyStroke);
@@ -182,6 +183,7 @@ const Content = () => {
   const [swipeDistance, setSwipeDistance] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageSwitchHandledRef = useRef(false);
 
   // Reverse refs + timer (to exit from rearcam)
   const previousView = useRef<string | null>(null);
@@ -415,11 +417,16 @@ const Content = () => {
 
   // Listen for key strokes to switch views
   useEffect(() => {
-    if ( !pauseKeyBinds && keyStroke === switchPage ) {
-      console.log(pauseKeyBinds, keyStroke, switchPage)
+    if (!keyStroke) {
+      pageSwitchHandledRef.current = false;
+      return;
+    }
+    if (pageSwitchHandledRef.current) return;
+    if (!pauseKeyBinds && keyStroke === switchPage) {
+      pageSwitchHandledRef.current = true;
       cycleView();
     }
-  }, [keyStroke, pauseKeyBinds, switchPage]);
+  }, [keyStroke, pauseKeyBinds, switchPage, view]);
 
   return (
     <>

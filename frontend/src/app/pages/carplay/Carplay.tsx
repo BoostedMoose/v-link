@@ -6,6 +6,7 @@ import { Typography } from '@/theme/styles/Typography';
 import { Link } from '@/theme/styles/Inputs';
 import { CustomIcon } from '@/theme/styles/Icons';
 import { useNamespaces } from '@/socket/Namespaces';
+import { summarizeUsbDevices } from '@/carplay/usbDeviceSummary';
 
 // Keyframes for opening and closing the chainlink
 const openChainLeft = keyframes`
@@ -90,8 +91,9 @@ function Carplay() {
                 const devices = await navigator.usb.getDevices();
 
                 if (devices.length > 0) {
-                    console.log(`(CarPlay) Devices found: ${devices}`);
-                    socket.log.emit('info', `(CarPlay) Devices found: ${devices}`);
+                    const deviceSummary = summarizeUsbDevices(devices);
+                    console.log(`(CarPlay) Devices found: ${deviceSummary}`);
+                    socket.log.emit('info', `(CarPlay) Devices found: ${deviceSummary}`);
                     appUpdate((state) => {
                         state.system.carplay.paired = true;
                     });
