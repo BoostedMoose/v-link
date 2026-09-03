@@ -55,6 +55,14 @@ describe('CompactSettings controls', () => {
     expect(dashboard).toHaveAttribute('aria-current', 'true');
   });
 
+  it('shows a icon on each settings tile', () => {
+    renderSettings();
+
+    screen.getAllByRole('button').forEach((button) => {
+      expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    });
+  });
+
   it('activates the highlighted tile with Enter', () => {
     renderSettings();
 

@@ -27,6 +27,11 @@ const Grid = styled.div`
 `;
 
 const Tile = styled.button<{ $accent: string; $danger?: boolean; $selected: boolean }>`
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-width: 0;
   min-height: 62px;
   border: ${({ $selected }) => $selected ? '3px' : '1px'} solid ${({ theme, $danger, $accent }) => $danger ? theme.colors.theme.red.default : $accent};
@@ -48,6 +53,23 @@ const Tile = styled.button<{ $accent: string; $danger?: boolean; $selected: bool
   }
 `;
 
+const TileIcon = styled.svg<{ $danger?: boolean; $selected: boolean }>`
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  overflow: visible;
+  fill: none;
+  stroke: ${({ theme, $danger, $selected }) =>
+    $danger
+      ? theme.colors.theme.red.active
+      : $selected
+        ? theme.colors.light
+        : theme.colors.medium};
+  stroke-width: 2.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+`;
+
 type SystemTask = 'quit' | 'restart' | 'reboot';
 type AppBindings = { left?: { value: string }; right?: { value: string } };
 type DongleBindings = { selectDown?: { value: string } };
@@ -55,6 +77,7 @@ type DongleBindings = { selectDown?: { value: string } };
 type CompactAction = {
   id: string;
   label: string;
+  icon: string;
   danger?: boolean;
   run: () => void;
 };
@@ -93,17 +116,18 @@ const CompactSettings = () => {
 
   const actions = useMemo<CompactAction[]>(() => {
     const items: CompactAction[] = [
-      { id: 'dashboard', label: 'DASHBOARD', run: () => navigate('Dashboard') },
-      { id: 'carplay', label: 'CARPLAY', run: () => navigate('Carplay') },
-      { id: 'restart', label: 'RESTART V-LINK', run: () => runSystemTask('restart') },
-      { id: 'quit', label: 'QUIT V-LINK', danger: true, run: () => runSystemTask('quit') },
-      { id: 'reboot', label: 'REBOOT PI', danger: true, run: () => runSystemTask('reboot') },
+      { id: 'dashboard', label: 'DASHBOARD', icon: 'dashboard', run: () => navigate('Dashboard') },
+      { id: 'carplay', label: 'CARPLAY', icon: 'carplay', run: () => navigate('Carplay') },
+      { id: 'restart', label: 'RESTART V-LINK', icon: 'restart', run: () => runSystemTask('restart') },
+      { id: 'quit', label: 'QUIT V-LINK', icon: 'quit', danger: true, run: () => runSystemTask('quit') },
+      { id: 'reboot', label: 'REBOOT PI', icon: 'system', danger: true, run: () => runSystemTask('reboot') },
     ];
 
     if (rtiEnabled) {
       items.push({
         id: 'rti',
         label: rtiState ? 'CLOSE RTI' : 'OPEN RTI',
+        icon: 'display',
         run: () => socket.sys.emit('systemTask', 'rti'),
       });
     }
@@ -151,6 +175,13 @@ const CompactSettings = () => {
             onPointerDown={() => setSelectedIndex(index)}
             onClick={action.run}
           >
+            <TileIcon
+              $danger={action.danger}
+              $selected={index === selectedIndex}
+              aria-hidden="true"
+            >
+              <use href={`/assets/svg/buttons/${action.icon}.svg#${action.icon}`} />
+            </TileIcon>
             {action.label}
           </Tile>
         ))}
