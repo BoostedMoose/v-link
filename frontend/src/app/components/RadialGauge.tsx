@@ -1,6 +1,7 @@
 import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
 import styled, { useTheme } from 'styled-components';
 import { useState, useEffect, useRef } from 'react';
+import { isCompactViewport } from '@/app/helper/Layout';
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import * as d3 from 'd3';
@@ -106,7 +107,8 @@ export const RadialGauge = ({
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const [mainRadius, setMainRadius] = useState(0);
 
-    const padding = 40;
+    const compact = isCompactViewport(APP((state) => state.system.windowSize));
+    const padding = compact ? 18 : 40;
     const containerRef = useRef<HTMLDivElement>(null);
 
     /* Observe container resizing and update dimensions. */
@@ -133,7 +135,7 @@ export const RadialGauge = ({
                 resizeObserver = null;
             }
         }
-    }, []);
+    }, [padding]);
 
     // Center of Gauge
     const cx = dimensions.height / 2;

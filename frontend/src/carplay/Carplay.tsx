@@ -17,6 +17,8 @@ import { CARPLAY_MEDIA_COMMAND_EVENT, type MediaCommand } from './mediaCommands'
 
 import { APP } from '@/store/Store';
 import hexToRGBA from '@/app/helper/HexToRGBA'
+import { fitInside, isCompactViewport, projectionRequestSize } from '@/app/helper/Layout'
+import type { ViewportSize } from '@/app/helper/Layout'
 
 import "./../themes.scss"
 
@@ -34,7 +36,6 @@ const Container = styled.div`
 
 const Stream = styled.div`
   position: absolute;
-  bottom: 0;
   zIndex: 1;
 
   height: 100%;
@@ -93,6 +94,8 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   const height          = APP((state) => state.system.carplaySize.height);
   const content         = APP((state) => state.system.interface.content)
   const navBar          = APP((state) => state.system.interface.navBar)
+  const windowSize      = APP((state) => state.system.windowSize)
+  const compact         = isCompactViewport(windowSize)
 
   const view            = APP((state) => state.system.view);
   type DongleConfig = Record<string, { value: unknown }>;
@@ -101,8 +104,10 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   const dongleConfig = APP((state) => state.settings.dongle_config as DongleConfig | undefined);
   const exitToDash = APP((state) => (state.settings.general as GeneralSettings | undefined)?.exitToDash?.value ?? false);
   const exitToDashRef = useRef(exitToDash);
+  const compactRef = useRef(compact);
 
   useEffect(() => { exitToDashRef.current = exitToDash; }, [exitToDash]);
+  useEffect(() => { compactRef.current = compact; }, [compact]);
   const useStandardizedResolution = APP((state) => (state.settings.dongle_config as { useStandardizedResolution?: { value: boolean } } | undefined)?.useStandardizedResolution?.value ?? false);
 
   const lastDongleConfigSigRef = useRef<string | null>(null);
@@ -123,30 +128,15 @@ function Carplay({ command, commandCounter }: CarplayProps) {
 
   const config = useMemo(() => {
     const dongleConfigFlat = dongleConfig ? flattenConfig(dongleConfig) : {};
-    let configWidth  = width;
-    let configHeight = height;
-
-    if (useStandardizedResolution) {
-      const standards = [
-        { w: 800, h: 480 },
-        { w: 960, h: 540 },
-        { w: 1024, h: 600 },
-        { w: 1280, h: 720 },
-        { w: 1920, h: 1080 },
-        { w: 2560, h: 1440 },
-        { w: 3840, h: 2160 },
-      ]
-      const snap = standards.find(s => s.w >= width && s.h >= height)
-      if (snap) {
-        configWidth  = snap.w
-        configHeight = snap.h
-      }
-    }
+    const projectionSize = projectionRequestSize(
+      { width, height },
+      useStandardizedResolution,
+    );
     const carplayConfig = {
       ...dongleConfigFlat,
       androidWorkMode: dongleConfigFlat.androidWorkMode ?? true, // TODO check if this is needed, node-carplay should default to true
-      width: configWidth,
-      height: configHeight,
+      width: projectionSize.width,
+      height: projectionSize.height,
     };
     
     const sig = JSON.stringify(dongleConfigFlat);
@@ -160,6 +150,21 @@ function Carplay({ command, commandCounter }: CarplayProps) {
 
   const configRef = useRef(config)
   useEffect(() => { configRef.current = config }, [config])
+
+  const [projectionSize, setProjectionSize] = useState<ViewportSize>({
+    width: config.width,
+    height: config.height,
+  })
+  const fittedProjection = useMemo(
+    () => fitInside({ width, height }, projectionSize),
+    [height, projectionSize, width],
+  )
+
+  useEffect(() => {
+    if (carplaySettings.phase !== 'streaming') {
+      setProjectionSize({ width: config.width, height: config.height })
+    }
+  }, [carplaySettings.phase, config.height, config.width])
 
 
   const mainElem = useRef<HTMLDivElement>(null)
@@ -277,7 +282,16 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           clearRetryTimeout()
           retryAttemptRef.current = 0
           const { codec, codedWidth, codedHeight } = ev.data.config ?? {}
-          socket.log.emit('info', `(CarPlay) Stream started: ${codedWidth}x${codedHeight} (${codec})`)
+          const { displayWidth, displayHeight } = ev.data
+          socket.log.emit(
+            'info',
+            `(CarPlay) Stream started: display=${displayWidth}x${displayHeight}, coded=${codedWidth}x${codedHeight} (${codec})`,
+          )
+          if (typeof displayWidth === 'number' && typeof displayHeight === 'number') {
+            setProjectionSize({ width: displayWidth, height: displayHeight })
+          } else if (typeof codedWidth === 'number' && typeof codedHeight === 'number') {
+            setProjectionSize({ width: codedWidth, height: codedHeight })
+          }
           appUpdate((state) => {
             transitionProjectionSession(state.system.carplay, { type: 'streamStarted' })
           });
@@ -398,7 +412,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
               stopRecording()
               break
             case CommandMapping.requestHostUI:
-              if (exitToDashRef.current) {
+              if (exitToDashRef.current || compactRef.current) {
                 appUpdate((state) => {
                   state.system.view = "Dashboard";
                 });
@@ -576,14 +590,19 @@ function Carplay({ command, commandCounter }: CarplayProps) {
         onPointerUp={sendTouchEvent}
         onPointerCancel={sendTouchEvent}
 
-        style={{ height: height, width: width }}>
+        style={{
+          height: fittedProjection.height,
+          width: fittedProjection.width,
+          left: fittedProjection.left,
+          top: fittedProjection.top,
+        }}>
 
         <canvas
           ref={canvasRef}
           id="video"
           style={
             carplaySettings.paired && carplaySettings.dongle
-              ? { display: 'block', width: '100%', height: '100%' }
+              ? { display: 'block', width: '100%', height: '100%', objectFit: 'contain' }
               : { display: 'none' }
           }
         />

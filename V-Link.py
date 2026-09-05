@@ -352,6 +352,17 @@ def non_blocking_input(prompt):
         return None
 
 
+def parse_window_size(value):
+    try:
+        width, height = (int(part) for part in value.lower().split('x', 1))
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('window size must use WIDTHxHEIGHT, for example 400x234')
+
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError('window width and height must be greater than zero')
+    return width, height
+
+
 def setup_arguments():
     parser = argparse.ArgumentParser(
         description='Application Manual:\n\n'
@@ -364,6 +375,13 @@ def setup_arguments():
     parser.add_argument('--vlin', action='store_true', help='Simulate LIN-Bus')
     parser.add_argument('--vite', action='store_false', help='Start on Vite-Port 5173')
     parser.add_argument('--nokiosk', action='store_false', help='Start in windowed mode')
+    parser.add_argument(
+        '--window-size',
+        type=parse_window_size,
+        default=(1280, 720),
+        metavar='WIDTHxHEIGHT',
+        help='Window size used with --nokiosk (default: 1280x720)',
+    )
     parser.add_argument('--dev', action='store_true', help='Development mode')
 
     return parser.parse_args()
@@ -457,6 +475,7 @@ if __name__ == '__main__':
     shared_state.vLin = args.vlin
     shared_state.vite = args.vite
     shared_state.isKiosk = args.nokiosk
+    shared_state.browserWindowSize = args.window_size
     shared_state.dev = args.dev
 
     #Set ignition signal HIGH initially

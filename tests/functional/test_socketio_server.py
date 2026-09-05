@@ -110,6 +110,28 @@ def test_app_ping_emits_state_bool(seeded_config_dir):
         client.disconnect(namespace='/app')
 
 
+def test_backlight_update_applies_valid_values_and_rejects_invalid_values(seeded_config_dir):
+    from backend.server import server, socketio
+    from backend.shared.shared_state import shared_state
+    server.config['TESTING'] = True
+    shared_state.backlight_manual = 5
+    shared_state.backlight_auto_enabled = True
+
+    client = socketio.test_client(server, namespace='/app')
+    try:
+        client.emit('backlight:update', {'manual': 9, 'auto_enabled': False}, namespace='/app')
+        assert shared_state.backlight_manual == 9
+        assert shared_state.backlight_auto_enabled is False
+
+        client.emit('backlight:update', {'manual': 17, 'auto_enabled': 'false'}, namespace='/app')
+        assert shared_state.backlight_manual == 9
+        assert shared_state.backlight_auto_enabled is False
+    finally:
+        shared_state.backlight_manual = None
+        shared_state.backlight_auto_enabled = None
+        client.disconnect(namespace='/app')
+
+
 # /sys namespace
 def test_systemtask_check_returns_true_when_config_exists(seeded_config_dir):
     """systemTask('check') returns True when the user config dir has files."""
