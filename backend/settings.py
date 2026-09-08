@@ -1,6 +1,7 @@
 import json
 import shutil
 import logging
+from copy import deepcopy
 from pathlib import Path
 
 from backend.shared.shared_state import shared_state
@@ -13,6 +14,7 @@ USER_CONFIG_DIR = Path.home() / '.config' / 'v-link'
 
 DEFAULT_PROFILES_DIR = APP_ROOT / 'backend' / 'config' / 'profiles'
 DEFAULT_CONFIG_DIR = APP_ROOT / 'backend' / 'config'
+REARCAM_SETTINGS_VERSION = 1
 
 def load_directory():
     # Ensure user config directory exists.
@@ -24,8 +26,54 @@ def load_directory():
         return None
     
 
+def _rearcam_schema_is_current(defaults, user):
+    """Return True only when rearcam uses the exact current settings structure."""
+    if not isinstance(defaults, dict) or not isinstance(user, dict):
+        return False
+    if set(user) != set(defaults):
+        return False
+
+    for setting_name, default_setting in defaults.items():
+        user_setting = user.get(setting_name)
+
+        # Block metadata is part of the schema and must match exactly.
+        if not isinstance(default_setting, dict):
+            if user_setting != default_setting:
+                return False
+            continue
+
+        if not isinstance(user_setting, dict) or set(user_setting) != set(default_setting):
+            return False
+
+        for field, default_value in default_setting.items():
+            user_value = user_setting.get(field)
+            if field != 'value':
+                if user_value != default_value:
+                    return False
+                continue
+
+            # User-selected values may differ, but their type and enumerated
+            # values must remain compatible with the current schema.
+            if isinstance(default_value, bool):
+                if not isinstance(user_value, bool):
+                    return False
+            elif isinstance(default_value, (int, float)):
+                if isinstance(user_value, bool) or not isinstance(user_value, (int, float)):
+                    return False
+            elif not isinstance(user_value, type(default_value)):
+                return False
+
+            options = default_setting.get('options')
+            allows_empty = setting_name == 'deviceSelectionMode' and user_value == ''
+            if options and setting_name != 'deviceId' and user_value not in options and not allows_empty:
+                return False
+
+    return True
+
+
 def migrate_settings():
-    # Merge any top-level keys present in the default config but missing from the user config.
+    # Add only entirely new top-level sections. Nested schemas must be migrated
+    # explicitly so obsolete fields cannot survive indefinitely.
     default_app = DEFAULT_CONFIG_DIR / 'app.json'
     user_app = USER_CONFIG_DIR / 'app.json'
     if not default_app.exists() or not user_app.exists():
@@ -35,11 +83,45 @@ def migrate_settings():
             defaults = json.load(f)
         with user_app.open('r', encoding='utf-8') as f:
             user = json.load(f)
-        missing = {k: v for k, v in defaults.items() if k not in user}
-        if missing:
-            user.update(missing)
+
+        added = []
+        for key, default_value in defaults.items():
+            if key not in user:
+                user[key] = deepcopy(default_value)
+                added.append(key)
+
+        updated = []
+
+        default_reverse_cam = defaults.get('reverseCam')
+        if isinstance(default_reverse_cam, dict):
+            user_constants = user.get('constants')
+            if not isinstance(user_constants, dict):
+                user_constants = {}
+                user['constants'] = user_constants
+
+            saved_version = user_constants.get('rearcam_settings_version')
+            reverse_cam_is_current = _rearcam_schema_is_current(
+                default_reverse_cam,
+                user.get('reverseCam'),
+            )
+
+            # Rearcam intentionally uses a clean format boundary. Reset only
+            # this block when its version or structure is old/incompatible.
+            if saved_version != REARCAM_SETTINGS_VERSION or not reverse_cam_is_current:
+                logger.error(
+                    '[Settings] Incompatible rearcam settings detected '
+                    f'(saved version={saved_version!r}, expected={REARCAM_SETTINGS_VERSION}, '
+                    f'schema_current={reverse_cam_is_current}). '
+                    'Resetting only reverseCam to the current defaults.'
+                )
+                user['reverseCam'] = deepcopy(default_reverse_cam)
+                user_constants['rearcam_settings_version'] = REARCAM_SETTINGS_VERSION
+                user_constants['rearcam_settings_reset_notice'] = True
+                updated.append('reverseCam (reset to current schema)')
+
+        if added or updated:
             save_settings('app', user)
-            logger.info(f'[Settings] Migrated missing keys into user config: {list(missing.keys())}')
+            logger.info(f'[Settings] Migrated app config; added={added}, updated={updated}')
     except Exception as e:
         logger.error(f'[Settings] Error during settings migration: {e}')
 

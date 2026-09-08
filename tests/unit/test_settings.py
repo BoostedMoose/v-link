@@ -2,6 +2,7 @@
 Unit tests for backend/settings.py
 """
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -204,6 +205,89 @@ def test_migrate_settings_adds_backlight_keys_to_old_config(tmp_path, monkeypatc
     assert 'auto_backlight' in result
     assert 'darkness_backlight' in result
     assert result['general']['colorTheme']['value'] == 'Red'   # user preference kept
+
+
+def test_migrate_settings_replaces_legacy_rearcam_without_touching_other_settings(tmp_path, monkeypatch):
+    """An incompatible rearcam block is replaced instead of recursively merged."""
+    from backend import settings
+
+    default_dir = tmp_path / 'default'
+    default_dir.mkdir()
+    user_dir = tmp_path / 'user'
+    user_dir.mkdir()
+
+    with (settings.DEFAULT_CONFIG_DIR / 'app.json').open(encoding='utf-8') as file:
+        default_app = json.load(file)
+
+    user_app = deepcopy(default_app)
+    user_app['general']['colorTheme']['value'] = 'Red'
+    user_app['constants'].pop('rearcam_settings_version')
+    user_app['reverseCam'] = {
+        'title': 'Reverse Camera Settings',
+        'type': 'system',
+        'enabled': {'value': False, 'label': 'Enabled'},
+        'delay': {'value': 12, 'label': 'Off Delay (sec)'},
+        'deviceSelectionMode': {
+            'value': 'label',
+            'label': 'Device Selection',
+            'options': [
+                {'value': 'auto', 'label': 'Automatic'},
+                {'value': 'label', 'label': 'Device label'},
+            ],
+        },
+        'deviceLabel': {'value': 'USB Camera', 'label': 'Camera Label'},
+        'videoWidth': {'value': 640, 'label': 'Video Width'},
+        'videoHeight': {'value': 360, 'label': 'Video Height'},
+        'videoFps': {'value': 25, 'label': 'Video FPS'},
+    }
+
+    (default_dir / 'app.json').write_text(json.dumps(default_app))
+    (user_dir / 'app.json').write_text(json.dumps(user_app))
+    monkeypatch.setattr(settings, 'DEFAULT_CONFIG_DIR', default_dir)
+    monkeypatch.setattr(settings, 'USER_CONFIG_DIR', user_dir)
+
+    settings.migrate_settings()
+
+    result = settings.load_settings('app')
+    assert result['reverseCam'] == default_app['reverseCam']
+    assert result['reverseCam']['guidelineMode']['value'] == 'Standard'
+    assert 'deviceLabel' not in result['reverseCam']
+    assert 'videoWidth' not in result['reverseCam']
+    assert 'videoHeight' not in result['reverseCam']
+    assert result['constants']['rearcam_settings_version'] == settings.REARCAM_SETTINGS_VERSION
+    assert result['constants']['rearcam_settings_reset_notice'] is True
+    assert result['general']['colorTheme']['value'] == 'Red'
+
+
+def test_migrate_settings_preserves_current_versioned_rearcam_values(tmp_path, monkeypatch):
+    """A current rearcam schema keeps compatible user-selected values."""
+    from backend import settings
+
+    default_dir = tmp_path / 'default'
+    default_dir.mkdir()
+    user_dir = tmp_path / 'user'
+    user_dir.mkdir()
+
+    with (settings.DEFAULT_CONFIG_DIR / 'app.json').open(encoding='utf-8') as file:
+        default_app = json.load(file)
+
+    user_app = deepcopy(default_app)
+    user_app['reverseCam']['deviceId']['value'] = 'saved-camera-id'
+    user_app['reverseCam']['delay']['value'] = 9
+    user_app['reverseCam']['guidelineMode']['value'] = 'Custom'
+    user_app['constants']['rearcam_settings_reset_notice'] = False
+
+    (default_dir / 'app.json').write_text(json.dumps(default_app))
+    (user_dir / 'app.json').write_text(json.dumps(user_app))
+    saved = []
+    monkeypatch.setattr(settings, 'save_settings', lambda name, data: saved.append(name))
+    monkeypatch.setattr(settings, 'DEFAULT_CONFIG_DIR', default_dir)
+    monkeypatch.setattr(settings, 'USER_CONFIG_DIR', user_dir)
+
+    settings.migrate_settings()
+
+    assert saved == []
+    assert json.loads((user_dir / 'app.json').read_text())['reverseCam'] == user_app['reverseCam']
 
 
 def test_check_settings_migrates_on_existing_config(tmp_path, monkeypatch):

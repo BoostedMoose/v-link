@@ -14,7 +14,7 @@ from .                      import settings
 from .media                 import media_api
 from .shared.shared_state   import shared_state
 
-from .threads.cam         import CAMThread
+from .threads.cam         import CAMThread, CameraGPIO
 
 
 import logging

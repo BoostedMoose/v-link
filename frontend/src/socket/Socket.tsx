@@ -166,20 +166,24 @@ export const Socket = () => {
       const onConnect = handleConnect('sys');
       const onDisconnect = handleDisconnect('sys');
       const onError = handleError('sys');
+      const onReverse = handleReverse();
 
       sysSocket.on('ign', handleIgnition);
+      sysSocket.on('reverse', onReverse);
       sysSocket.on('connect', onConnect);
       sysSocket.on('disconnect', onDisconnect);
       sysSocket.on('connect_error', onError);
 
       cleanupListeners.push(() => {
         sysSocket.off('ign', handleIgnition);
+        sysSocket.off('reverse', onReverse);
         sysSocket.off('connect', onConnect);
         sysSocket.off('disconnect', onDisconnect);
         sysSocket.off('connect_error', onError);
       });
 
       sysSocket.emit('systemTask', 'ign');
+      sysSocket.emit('systemTask', 'reverse');
     }
 
     // Setup log socket listeners if it exists
