@@ -113,6 +113,29 @@ def _plain(capsys) -> str:
     return strip_ansi(_render(capsys))
 
 
+def test_full_restart_reexecutes_after_browser_hardware_and_server_shutdown(monkeypatch):
+    events = []
+    monkeypatch.setattr(_vmod, 'logger', MagicMock())
+    instance = _vmod.VLINK()
+    instance.stop_thread = lambda name: events.append(('stop', name))
+    monkeypatch.setattr(_vmod.shared_state, 'THREADS', {
+        'server': _alive(), 'app': _alive(), 'rti': _alive(), 'ign': _alive(),
+    })
+    restart_event = threading.Event()
+    restart_event.set()
+    monkeypatch.setattr(_vmod.shared_state, 'restart_event', restart_event)
+    monkeypatch.setattr(_vmod.sys, 'argv', [str(_VLINK_PATH), '--dev', '--nokiosk'])
+    monkeypatch.setattr(_vmod.os, 'execv', lambda exe, args: events.append(('exec', exe, args)))
+
+    instance.process_restart_event()
+
+    assert events == [
+        ('stop', 'app'), ('stop', 'rti'), ('stop', 'ign'), ('stop', 'server'),
+        ('exec', sys.executable, [sys.executable, str(_VLINK_PATH), '--dev', '--nokiosk']),
+    ]
+    assert not restart_event.is_set()
+
+
 class TestBacklightCanData:
     def test_reads_nested_sensor_data(self):
         from backend.shared.backlight_helper import BacklightController

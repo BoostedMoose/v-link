@@ -6,7 +6,7 @@ import { StyleSheetManager, ThemeProvider } from 'styled-components';
 import appSettings from '../../backend/config/app.json';
 import Content from '@/app/Content';
 import { Modal } from '@/app/components/Modal';
-import Carplay from '@/carplay/Carplay';
+import Carplay from '@/carplay/ProjectionRuntime';
 import { APP } from '@/store/Store';
 import { theme } from '@/theme/Theme';
 import { LocalMediaProvider } from '@/app/pages/music/LocalMediaProvider';

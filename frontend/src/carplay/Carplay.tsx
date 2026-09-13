@@ -70,9 +70,6 @@ const Overlay = styled.div<OverlayProps>`
 `;
 
 
-const videoChannel = new MessageChannel()
-const micChannel = new MessageChannel()
-
 const STARTUP_WATCHDOG_MS = 12000
 const USB_DETACH_DEBOUNCE_MS = 4000
 const RETRY_BASE_MS = 1000
@@ -82,9 +79,20 @@ const MAX_SESSION_RETRIES = 5
 interface CarplayProps {
   command: string,
   commandCounter: number
+  resetDevice?: boolean
+  onRecovery: () => void
+  onHealthy: () => void
 }
 
-function Carplay({ command, commandCounter }: CarplayProps) {
+function Carplay({ command, commandCounter, resetDevice = false, onRecovery, onHealthy }: CarplayProps) {
+
+  const [videoChannel] = useState(() => new MessageChannel())
+  const [micChannel] = useState(() => new MessageChannel())
+  const resetDeviceRef = useRef(resetDevice)
+  const disposedRef = useRef(false)
+  const failedRef = useRef(false)
+  const usbStartingRef = useRef(false)
+  const healthyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const socket = useNamespaces();
 
@@ -213,6 +221,19 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     return worker
   }, [])
 
+  useEffect(() => () => {
+    disposedRef.current = true
+    carplayWorker.onmessage = null
+    carplayWorker.terminate()
+    videoChannel.port1.close()
+    videoChannel.port2.close()
+    micChannel.port1.close()
+    micChannel.port2.close()
+    if (healthyTimerRef.current) clearTimeout(healthyTimerRef.current)
+  }, [carplayWorker, micChannel, videoChannel])
+
+  useEffect(() => () => { renderWorker?.terminate() }, [renderWorker])
+
   const { processAudio, getAudioPlayer, resetAudioRouting, startRecording, stopRecording } =
     useCarplayAudio(carplayWorker, micChannel.port2)
 
@@ -278,6 +299,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
       const { type } = ev.data;
       switch (type) {
         case 'streamStarted': {
+          if (failedRef.current || disposedRef.current) break
           clearStartupWatchdog()
           clearRetryTimeout()
           retryAttemptRef.current = 0
@@ -329,6 +351,10 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     carplayWorker.onmessage = ev => {
       const { type } = ev.data
       switch (type) {
+        case 'workerStarted':
+          usbStartingRef.current = false
+          if (APP.getState().system.carplay.phase === 'starting') clearStartupWatchdog()
+          break
         case 'plugged':
           console.log('(CarPlay) Worker connected')
           socket.log.emit('debug', '(CarPlay) Worker Connected')
@@ -337,6 +363,11 @@ function Carplay({ command, commandCounter }: CarplayProps) {
             transitionProjectionSession(state.system.carplay, { type: 'phoneConnected' })
           });
           armStartupWatchdog()
+          break
+        case 'driverHealthy':
+          if (!healthyTimerRef.current && !failedRef.current) {
+            healthyTimerRef.current = setTimeout(onHealthy, 30000)
+          }
           break
         case 'unplugged':
           clearStartupWatchdog()
@@ -424,6 +455,14 @@ function Carplay({ command, commandCounter }: CarplayProps) {
           }
           break
         case 'failure':
+          if (failedRef.current) break
+          failedRef.current = true
+          usbStartingRef.current = false
+          carplayWorker.terminate()
+          stopRecording()
+          resetAudioRouting()
+          if (healthyTimerRef.current) clearTimeout(healthyTimerRef.current)
+          clearRetryTimeout()
           clearStartupWatchdog()
           const failureMessage =
             'message' in ev.data && typeof ev.data.message === 'string'
@@ -435,17 +474,12 @@ function Carplay({ command, commandCounter }: CarplayProps) {
               error: failureMessage,
             })
           });
-          // A page reload terminates the worker and lets Chromium release the
-          // outstanding WebUSB read. Calling USBDevice.close() from inside the
-          // live worker is unsafe while node-carplay's transferIn is pending.
-          if (retryTimeoutRef.current == null) {
-            socket.log.emit('error', `(CarPlay) USB driver failed; reloading projection runtime`)
-            retryTimeoutRef.current = setTimeout(() => window.location.reload(), 3000)
-          }
+          socket.log.emit('error', `(CarPlay) USB driver failed: ${failureMessage}`)
+          retryTimeoutRef.current = setTimeout(onRecovery, 3000)
           break
       }
     }
-  }, [armStartupWatchdog, carplayWorker, clearRetryTimeout, clearStartupWatchdog, getAudioPlayer, processAudio, renderWorker, resetAudioRouting, startRecording, stopRecording])
+  }, [armStartupWatchdog, carplayWorker, clearRetryTimeout, clearStartupWatchdog, getAudioPlayer, processAudio, renderWorker, resetAudioRouting, startRecording, stopRecording, onRecovery, onHealthy])
 
   useEffect(() => {
     const element = mainElem?.current
@@ -489,6 +523,7 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   const checkDevice = useCallback(
     async (request: boolean = false) => {
       const device = request ? await requestDevice() : await findDevice()
+      if (disposedRef.current || failedRef.current) return
       appUpdate((state) => {
         state.system.carplay.detectionComplete = true
       })
@@ -500,10 +535,31 @@ function Carplay({ command, commandCounter }: CarplayProps) {
         })
 
         if (phase === 'idle' || phase === 'ready' || phase === 'error') {
+          const resetDevice = resetDeviceRef.current
+          resetDeviceRef.current = false
+          usbStartingRef.current = true
+          if (resetDevice) {
+            socket.log.emit('info', '(CarPlay) Resetting USB device for a fresh projection session')
+          }
           appUpdate((state) => {
             transitionProjectionSession(state.system.carplay, { type: 'startRequested' })
           })
-          carplayWorker.postMessage({ type: 'start', payload: { config: configRef.current } })
+          carplayWorker.postMessage({
+            type: 'start',
+            payload: { config: configRef.current, resetDevice },
+          })
+          clearStartupWatchdog()
+          startupWatchdogRef.current = setTimeout(() => {
+            if (disposedRef.current || failedRef.current) return
+            failedRef.current = true
+            carplayWorker.terminate()
+            const error = 'USB session startup timed out'
+            socket.log.emit('error', `(CarPlay) ${error}`)
+            appUpdate(state => {
+              transitionProjectionSession(state.system.carplay, { type: 'failed', error })
+            })
+            onRecovery()
+          }, 20000)
         }
 
         console.log('Dongle detected')
@@ -519,12 +575,13 @@ function Carplay({ command, commandCounter }: CarplayProps) {
         }
       }
     },
-    [carplayWorker]
+    [appUpdate, carplayWorker, clearStartupWatchdog, onRecovery, socket.log]
   )
 
   // usb connect/disconnect handling and device check
   useEffect(() => {
     navigator.usb.onconnect = async () => {
+      if (disposedRef.current || failedRef.current) return
       if (usbDetachTimeoutRef.current) {
         clearTimeout(usbDetachTimeoutRef.current)
         usbDetachTimeoutRef.current = null
@@ -545,6 +602,10 @@ function Carplay({ command, commandCounter }: CarplayProps) {
       usbDetachTimeoutRef.current = setTimeout(async () => {
         usbDetachTimeoutRef.current = null
         const device = await findDevice()
+        if (disposedRef.current) return
+        // The new worker owns reset/re-enumeration until startup completes.
+        // Queuing stop here could close the replacement after it has opened.
+        if (usbStartingRef.current) return
         if (device) return
 
         clearRetryTimeout()

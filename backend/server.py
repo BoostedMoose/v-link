@@ -366,10 +366,11 @@ class ServerThread(threading.Thread):
             settings.reset_settings()
             shared_state.restart_event.set()
 
-        elif args == 'rti':
-            # Toggles RTI and HDMI status
-            logger.info(f'[Server] Toggle RTI/HDMI')
-            shared_state.rtiStatus = not shared_state.rtiStatus
+        elif args in ('rti', 'rti_open', 'rti_close'):
+            # Auto-open is idempotent; the manual control remains a toggle.
+            requested_state = {'rti_open': True, 'rti_close': False}.get(args, not shared_state.rtiStatus)
+            logger.info('[Server] %s RTI/HDMI', 'Open' if requested_state else 'Close')
+            shared_state.rtiStatus = requested_state
             shared_state.hdmiStatus = shared_state.rtiStatus
 
             socketio.emit('state', shared_state.rtiStatus, namespace='/rti')
@@ -382,8 +383,7 @@ class ServerThread(threading.Thread):
             shared_state.exit_event.set()
 
         elif args == 'restart':
-            # Restarts the application (namely the frontend)
-            logger.info(f'[Server] Restart application')
+            logger.info('[Server] Restart application, browser and hardware')
             shared_state.restart_event.set()
 
         elif args == 'hdmi':

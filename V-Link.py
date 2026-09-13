@@ -272,13 +272,15 @@ class VLINK:
             logger.info('[V-Link] Restarting App')
             shared_state.restart_event.clear()
 
-            for thread_name, thread in shared_state.THREADS.items():
-                if thread_name != 'server' and isinstance(thread, threading.Thread) and thread.is_alive():
+            # Release Chromium/WebUSB first, then hardware, then the server.
+            # Re-exec the application so no RTI, ignition, event or sensor state
+            # leaks into the next run. Saved settings and launch flags survive.
+            self.stop_thread('app')
+            for thread_name in list(shared_state.THREADS):
+                if thread_name not in ('app', 'server'):
                     self.stop_thread(thread_name)
-            time.sleep(.5)
-            
-            self.start_thread('app', logger)
-            self.start_modules()
+            self.stop_thread('server')
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
 
     def process_hdmi_event(self):
         if shared_state.hdmi_event.is_set():

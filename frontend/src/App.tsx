@@ -18,7 +18,7 @@ import { sendLocalMediaCommand } from './app/pages/music/localMediaCommands';
 import { routeHardwareAction } from './mediaActions';
 import { isCompactViewport, smallestViewport } from './app/helper/Layout';
 import type { ViewportSize } from './app/helper/Layout';
-import Carplay from './carplay/Carplay';
+import Carplay from './carplay/ProjectionRuntime';
 import Cardata from './cardata/Cardata';
 
 import './App.css';

@@ -13,6 +13,50 @@ from pathlib import Path
 
 import pytest
 
+
+def test_restart_requests_full_application_restart(monkeypatch):
+    from backend.server import server, socketio
+    from backend.shared.shared_state import shared_state
+    import threading
+
+    restart_event = threading.Event()
+    monkeypatch.setattr(shared_state, 'restart_event', restart_event)
+    monkeypatch.setattr(shared_state, 'rtiStatus', True)
+    client = socketio.test_client(server, namespace='/sys')
+    try:
+        client.get_received('/sys')
+        client.emit('systemTask', 'restart', namespace='/sys')
+        assert restart_event.is_set()
+        assert shared_state.rtiStatus is True
+        assert not any(event['name'] == 'restartProjection' for event in client.get_received('/sys'))
+    finally:
+        client.disconnect(namespace='/sys')
+
+
+def test_rti_explicit_open_close_are_idempotent_and_toggle_is_preserved(monkeypatch):
+    from backend.server import server, socketio
+    from backend.shared.shared_state import shared_state
+
+    monkeypatch.setattr(shared_state, 'rtiStatus', False)
+    monkeypatch.setattr(shared_state, 'hdmiStatus', False)
+    monkeypatch.setattr(shared_state, 'dev', True)
+    client = socketio.test_client(server, namespace='/sys')
+    try:
+        for _ in range(2):
+            client.emit('systemTask', 'rti_open', namespace='/sys')
+            assert shared_state.rtiStatus is True
+            assert shared_state.hdmiStatus is True
+        for _ in range(2):
+            client.emit('systemTask', 'rti_close', namespace='/sys')
+            assert shared_state.rtiStatus is False
+            assert shared_state.hdmiStatus is False
+        client.emit('systemTask', 'rti', namespace='/sys')
+        assert shared_state.rtiStatus is True
+        client.emit('systemTask', 'rti', namespace='/sys')
+        assert shared_state.rtiStatus is False
+    finally:
+        client.disconnect(namespace='/sys')
+
 _APP_ROOT = Path(__file__).resolve().parent.parent.parent
 
 

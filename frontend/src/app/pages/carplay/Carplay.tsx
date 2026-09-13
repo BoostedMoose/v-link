@@ -137,6 +137,10 @@ function Carplay() {
 
     // Handle button click
     const onClick = () => {
+        if (carplaySettings.phase === 'error') {
+            socket.sys.emit('systemTask', 'restart')
+            return
+        }
         if (!carplaySettings.paired) {
             // Send event to carplay component to pair the dongle
             console.log('(CarPlay) Pairing Dongle');
@@ -156,7 +160,9 @@ function Carplay() {
     return (
         <Container>
             <Body2>
-                {carplaySettings.paired && carplaySettings.dongle
+                {carplaySettings.phase === 'error'
+                    ? 'CONNECTION FAILED — CLICK TO RETRY'
+                    : carplaySettings.paired && carplaySettings.dongle
                     ? carplaySettings.phase === 'connected'
                         ? 'LAUNCHING...'
                         : 'CONNECT iPHONE / ANDROID DEVICE'
