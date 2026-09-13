@@ -12,6 +12,7 @@ import { AudioPlayerKey, Command, KeyCommand } from "./types";
 import { RenderEvent, ResetEvent } from './render/RenderEvents'
 import { RingBuffer } from 'ringbuf.js'
 import { createAudioPlayerKey } from './utils'
+import { resetUsbSession } from './usbStartup'
 
 //This shouldn't be here, try to fix vite.config.ts.....
 import { Buffer } from 'buffer';
@@ -24,6 +25,27 @@ const diagnosticPrefixes = [
   '[CarPlay USB]',
 ]
 const workerConsoleInfo = console.info.bind(console)
+const workerConsoleError = console.error.bind(console)
+
+const formatDiagnosticValue = (value: unknown) => {
+  if (value instanceof Error) return `${value.name}: ${value.message}`
+  if (typeof value === 'string') return value
+
+  if (value && typeof value === 'object') {
+    const errorLike = value as { name?: unknown; message?: unknown }
+    if (typeof errorLike.message === 'string') {
+      return typeof errorLike.name === 'string'
+        ? `${errorLike.name}: ${errorLike.message}`
+        : errorLike.message
+    }
+  }
+
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
 
 console.info = (...args: unknown[]) => {
   workerConsoleInfo(...args)
@@ -43,6 +65,13 @@ console.info = (...args: unknown[]) => {
   postMessage({ type: 'diagnostic', message })
 }
 
+let lastUsbError: string | null = null
+
+console.error = (...args: unknown[]) => {
+  workerConsoleError(...args)
+  lastUsbError = args.map(formatDiagnosticValue).join(' ')
+}
+
 let carplayWeb: CarplayWeb | null = null
 let videoPort: MessagePort | null = null
 let microphonePort: MessagePort | null = null
@@ -52,6 +81,7 @@ const pendingAudio: Record<AudioPlayerKey, Int16Array[]> = {}
 const MAX_PENDING_AUDIO_FRAMES = 8
 let lifecycle: Promise<void> = Promise.resolve()
 let videoMessageCount = 0
+let driverHealthyReported = false
 
 const clearAudioState = () => {
   Object.keys(audioBuffers).forEach(key => delete audioBuffers[key as AudioPlayerKey])
@@ -104,13 +134,15 @@ const withoutUsbReset = async <T>(device: USBDevice, operation: () => Promise<T>
   }
 }
 
-const startProjection = async (nextConfig: Partial<DongleConfig>) => {
+const startProjection = async (nextConfig: Partial<DongleConfig>, resetDevice = false) => {
   if (carplayWeb) return
 
   clearAudioState()
   videoMessageCount = 0
+  driverHealthyReported = false
+  lastUsbError = null
   config = nextConfig
-  const device = await findDevice()
+  const device = resetDevice ? await resetUsbSession(findDevice) : await findDevice()
   if (!device) throw new Error('Carlinkit dongle is not available')
 
   const next = new CarplayWeb(config)
@@ -143,15 +175,28 @@ const runLifecycle = (operation: () => Promise<void>) => {
   lifecycle = lifecycle.then(operation, operation).catch(error => {
     postMessage({
       type: 'failure',
-      message: error instanceof Error ? error.message : String(error),
+      message: formatDiagnosticValue(error),
     })
   })
 }
 
 const handleMessage = (message: CarplayMessage) => {
+  if (message.type === 'failure') {
+    postMessage({
+      type: 'failure',
+      message: lastUsbError ?? 'USB driver stopped after repeated read failures',
+    })
+    return
+  }
+
   if (carplayWeb) {
     const driver = carplayWeb.dongleDriver as unknown as { errorCount?: number }
     if (typeof driver.errorCount === 'number') driver.errorCount = 0
+  }
+
+  if (!driverHealthyReported) {
+    driverHealthyReported = true
+    postMessage({ type: 'driverHealthy' })
   }
 
   const { type, message: payload } = message
@@ -219,8 +264,8 @@ onmessage = async (event: MessageEvent<Command>) => {
       }
       break
     case 'start':
-      const { config: startConfig } = event.data.payload
-      runLifecycle(() => startProjection(startConfig))
+      const { config: startConfig, resetDevice } = event.data.payload
+      runLifecycle(() => startProjection(startConfig, resetDevice))
       break
     case 'touch':
       if (config && carplayWeb) {

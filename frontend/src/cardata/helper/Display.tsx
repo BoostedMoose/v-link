@@ -12,9 +12,9 @@ const Display: React.FC<DisplayProps> = ({ autoOpen }) => {
     useEffect(() => {
         if (autoOpen) {
             socket.log.emit('info', 'Opening RTI')
-            socket.sys.emit("systemTask", "rti")
+            socket.sys.emit("systemTask", "rti_open")
         }
-    }, [])
+    }, [autoOpen])
 
     return null;
 

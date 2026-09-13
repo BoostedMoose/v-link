@@ -20,11 +20,11 @@ class RTIThread(threading.Thread):
 
         try:
             if(shared_state.rpiModel == 5):
-                self.rti_serial = serial.Serial('/dev/ttyAMA2', baudrate = 2400, timeout = 1)
+                self.rti_serial = serial.Serial('/dev/ttyAMA2', baudrate = 2400, timeout = 1, write_timeout = 1)
             elif (shared_state.rpiModel == 4):
-                self.rti_serial = serial.Serial('/dev/ttyAMA3', baudrate = 2400, timeout = 1)
+                self.rti_serial = serial.Serial('/dev/ttyAMA3', baudrate = 2400, timeout = 1, write_timeout = 1)
             elif (shared_state.rpiModel == 3):
-                self.rti_serial = serial.Serial('/dev/ttyS0', baudrate = 2400, timeout = 1)
+                self.rti_serial = serial.Serial('/dev/ttyS0', baudrate = 2400, timeout = 1, write_timeout = 1)
         except serial.SerialException as e:
             self.logger.error(f'[RTI] Error initializing Serial port: {e}')
             self.rti_serial = None
@@ -33,9 +33,11 @@ class RTIThread(threading.Thread):
         self.run_rti()
         
     def stop_thread(self):
-        time.sleep(.5)
-        self.cleanup()
         self._stop_event.set()
+        # Let the writer leave its loop before closing the serial port.
+        if self.is_alive() and threading.current_thread() is not self:
+            self.join()
+        self.cleanup()
 
     def write(self, byte):
         if self.rti_serial and self.rti_serial.is_open:
