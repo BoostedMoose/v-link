@@ -14,7 +14,6 @@ import Settings from './pages/settings/Settings';
 import NavBar from '@/app/sidebars/NavBar';
 import SideBar from '@/app/sidebars/SideBar';
 import TopBar from '@/app/sidebars/TopBar';
-import { io } from "socket.io-client";
 import { useNamespaces } from '@/socket/Namespaces';
 
 type SideBarsSettings = { topBarHeight: { value: number }; navBarHeight: { value: number } };
@@ -175,25 +174,6 @@ const Content = () => {
   const previousView = useRef<string | null>(null);
   const reverseNavigated = useRef(false);
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  /* Socket connection for reverse camera */
-  useEffect(() => {
-    const sysChannel = io("ws://localhost:4001/sys", { transports: ["websocket"] });
-
-    const onReverse = (active: boolean) => {
-      socket.log.emit(`[Frontend] Reverse: ${active}`);
-      appUpdate((state) => {
-        state.system.reverse = active;
-      });
-    };
-
-    sysChannel.on("reverse", onReverse);
-
-    return () => {
-      sysChannel.off("reverse", onReverse);
-      sysChannel.close();
-    };
-  }, [appUpdate]);
 
   /* Reverse camera logic */
   useEffect(() => {
