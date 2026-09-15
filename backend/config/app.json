@@ -548,10 +548,6 @@
     "delay": {
       "value": 0,
       "label": "MMI Delay"
-    },
-    "useStandardizedResolution": {
-      "value": false,
-      "label": "Snap to nearest resolution (Android Auto)"
     }
   },
   "comfort": {

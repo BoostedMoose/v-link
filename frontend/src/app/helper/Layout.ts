@@ -43,6 +43,8 @@ const STANDARD_PROJECTION_SIZES: ViewportSize[] = [
   { width: 3840, height: 2160 },
 ];
 
+export const MIN_CARPLAY_SIZE: ViewportSize = { width: 1280, height: 720 };
+
 /**
  * The compact shell is intended for the low-resolution RTI replacement
  * displays. Requiring only one dimension to cross the threshold also handles
@@ -78,18 +80,41 @@ export const fitInside = (
 };
 
 /**
- * Low-resolution dongle requests are not handled consistently by Android Auto.
- * Compact screens therefore render a standard 800x480 stream and downscale it
- * locally. Other displays retain the existing opt-in snapping behaviour.
+ * Compact displays preserve the projection aspect ratio to avoid clipping the
+ * very small CarPlay UI. Larger installations retain V-Link's original
+ * full-surface rendering behaviour.
  */
-export const projectionRequestSize = (
+export const projectionDisplayRect = (
   viewport: ViewportSize,
-  useStandardizedResolution: boolean,
+  content: ViewportSize,
+  compact: boolean,
+): FittedRect => compact
+  ? fitInside(viewport, content)
+  : { ...viewport, left: 0, top: 0 };
+
+const standardizedProjectionSize = (
+  viewport: ViewportSize,
+  minimum: ViewportSize = { width: 0, height: 0 },
 ): ViewportSize => {
-  const shouldStandardize = isCompactViewport(viewport) || useStandardizedResolution;
-  if (!shouldStandardize) return viewport;
+  const requiredWidth = Math.max(viewport.width, minimum.width);
+  const requiredHeight = Math.max(viewport.height, minimum.height);
 
   return STANDARD_PROJECTION_SIZES.find(
-    (size) => size.width >= viewport.width && size.height >= viewport.height,
+    (size) => size.width >= requiredWidth && size.height >= requiredHeight,
   ) ?? viewport;
 };
+
+/**
+ * CarPlay negotiation is unreliable with arbitrary browser content sizes and
+ * with this dongle's 800x480 mode. Always use a standard size of at least 720p
+ * and downscale the resulting stream to the available viewport locally.
+ */
+export const carplayRequestSize = (viewport: ViewportSize): ViewportSize =>
+  standardizedProjectionSize(viewport, MIN_CARPLAY_SIZE);
+
+/**
+ * Android Auto also expects standard projection dimensions. Always round the
+ * available viewport up to the first supported size.
+ */
+export const androidAutoRequestSize = (viewport: ViewportSize): ViewportSize =>
+  standardizedProjectionSize(viewport);

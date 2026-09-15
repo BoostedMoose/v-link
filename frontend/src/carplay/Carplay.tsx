@@ -17,7 +17,12 @@ import { CARPLAY_MEDIA_COMMAND_EVENT, type MediaCommand } from './mediaCommands'
 
 import { APP } from '@/store/Store';
 import hexToRGBA from '@/app/helper/HexToRGBA'
-import { fitInside, isCompactViewport, projectionRequestSize } from '@/app/helper/Layout'
+import {
+  androidAutoRequestSize,
+  carplayRequestSize,
+  isCompactViewport,
+  projectionDisplayRect,
+} from '@/app/helper/Layout'
 import type { ViewportSize } from '@/app/helper/Layout'
 
 import "./../themes.scss"
@@ -116,17 +121,11 @@ function Carplay({ command, commandCounter, resetDevice = false, onRecovery, onH
 
   useEffect(() => { exitToDashRef.current = exitToDash; }, [exitToDash]);
   useEffect(() => { compactRef.current = compact; }, [compact]);
-  const useStandardizedResolution = APP((state) => (state.settings.dongle_config as { useStandardizedResolution?: { value: boolean } } | undefined)?.useStandardizedResolution?.value ?? false);
-
   const lastDongleConfigSigRef = useRef<string | null>(null);
-
-  // Keys that must not be forwarded to the dongle driver
-  const VLINK_ONLY_KEYS = ['useStandardizedResolution'];
 
   const flattenConfig = (config: Record<string, any>) => {
     const result: Record<string, any> = {};
     Object.entries(config).forEach(([key, value]) => {
-      if (VLINK_ONLY_KEYS.includes(key)) return;
       if (typeof value === "object" && value !== null && "value" in value) {
         result[key] = value.value;
       }
@@ -134,39 +133,43 @@ function Carplay({ command, commandCounter, resetDevice = false, onRecovery, onH
     return result;
   };
 
-  const config = useMemo(() => {
+  const projectionConfig = useMemo(() => {
     const dongleConfigFlat = dongleConfig ? flattenConfig(dongleConfig) : {};
-    const projectionSize = projectionRequestSize(
-      { width, height },
-      useStandardizedResolution,
-    );
+    const carPlaySize = carplayRequestSize({ width, height });
+    const androidAutoSize = androidAutoRequestSize({ width, height });
     const carplayConfig = {
       ...dongleConfigFlat,
       androidWorkMode: dongleConfigFlat.androidWorkMode ?? true, // TODO check if this is needed, node-carplay should default to true
-      width: projectionSize.width,
-      height: projectionSize.height,
+      width: carPlaySize.width,
+      height: carPlaySize.height,
     };
-    
-    const sig = JSON.stringify(dongleConfigFlat);
+
+    const sig = JSON.stringify({ carplayConfig, androidAutoSize });
     if (sig !== lastDongleConfigSigRef.current) {
-      socket.log.emit('info', `(CarPlay) Config: ${JSON.stringify(carplayConfig)}`);
+      socket.log.emit(
+        'info',
+        `(CarPlay) Config: ${JSON.stringify(carplayConfig)}; Android Auto=${androidAutoSize.width}x${androidAutoSize.height}`,
+      );
       lastDongleConfigSigRef.current = sig;
     }
 
-    return carplayConfig;
-  }, [dongleConfig, width, height, useStandardizedResolution]);
+    return { carplayConfig, androidAutoSize };
+  }, [dongleConfig, width, height]);
 
-  const configRef = useRef(config)
-  useEffect(() => { configRef.current = config }, [config])
+  const config = projectionConfig.carplayConfig
+
+  const configRef = useRef(projectionConfig)
+  useEffect(() => { configRef.current = projectionConfig }, [projectionConfig])
 
   const [projectionSize, setProjectionSize] = useState<ViewportSize>({
     width: config.width,
     height: config.height,
   })
-  const fittedProjection = useMemo(
-    () => fitInside({ width, height }, projectionSize),
-    [height, projectionSize, width],
+  const displayRect = useMemo(
+    () => projectionDisplayRect({ width, height }, projectionSize, compact),
+    [compact, height, projectionSize, width],
   )
+  const projectionTop = Math.max(0, windowSize.height - height)
 
   useEffect(() => {
     if (carplaySettings.phase !== 'streaming') {
@@ -546,7 +549,11 @@ function Carplay({ command, commandCounter, resetDevice = false, onRecovery, onH
           })
           carplayWorker.postMessage({
             type: 'start',
-            payload: { config: configRef.current, resetDevice },
+            payload: {
+              config: configRef.current.carplayConfig,
+              androidAutoSize: configRef.current.androidAutoSize,
+              resetDevice,
+            },
           })
           clearStartupWatchdog()
           startupWatchdogRef.current = setTimeout(() => {
@@ -652,23 +659,27 @@ function Carplay({ command, commandCounter, resetDevice = false, onRecovery, onH
         onPointerCancel={sendTouchEvent}
 
         style={{
-          height: fittedProjection.height,
-          width: fittedProjection.width,
-          left: fittedProjection.left,
-          top: fittedProjection.top,
+          height: displayRect.height,
+          width: displayRect.width,
+          left: displayRect.left,
+          top: projectionTop + displayRect.top,
         }}>
 
         <canvas
           ref={canvasRef}
           id="video"
-          style={
-            carplaySettings.paired && carplaySettings.dongle
-              ? { display: 'block', width: '100%', height: '100%', objectFit: 'contain' }
-              : { display: 'none' }
-          }
+          style={{
+            display: carplaySettings.paired && carplaySettings.dongle ? 'block' : 'none',
+            width: '100%',
+            height: '100%',
+          }}
         />
       </Stream>
-      <Overlay isVisible={content} navVisible={navBar} />
+      <Overlay
+        isVisible={content}
+        navVisible={navBar}
+        style={{ height, top: projectionTop }}
+      />
     </Container>
   )
 }

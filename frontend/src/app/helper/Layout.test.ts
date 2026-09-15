@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { fitInside, isCompactViewport, projectionRequestSize, smallestViewport } from './Layout';
+import {
+  androidAutoRequestSize,
+  carplayRequestSize,
+  fitInside,
+  isCompactViewport,
+  projectionDisplayRect,
+  smallestViewport,
+} from './Layout';
 
 describe('layout helpers', () => {
   it('constrains an oversized Chromium viewport to the visible screen', () => {
@@ -45,19 +52,53 @@ describe('layout helpers', () => {
     expect(fitted.top).toBe(0);
   });
 
-  it('requests a supported projection size for compact screens', () => {
-    expect(projectionRequestSize({ width: 400, height: 234 }, false))
+  it('preserves aspect ratio only on compact projection surfaces', () => {
+    expect(projectionDisplayRect(
+      { width: 400, height: 234 },
+      { width: 1280, height: 720 },
+      true,
+    )).toEqual({ width: 400, height: 225, left: 0, top: 4.5 });
+
+    expect(projectionDisplayRect(
+      { width: 1248, height: 547 },
+      { width: 1280, height: 720 },
+      false,
+    )).toEqual({ width: 1248, height: 547, left: 0, top: 0 });
+  });
+
+  it('snaps Android Auto to a standard size on compact screens', () => {
+    expect(androidAutoRequestSize({ width: 400, height: 234 }))
       .toEqual({ width: 800, height: 480 });
-    expect(projectionRequestSize({ width: 480, height: 248 }, false))
+    expect(androidAutoRequestSize({ width: 480, height: 248 }))
       .toEqual({ width: 800, height: 480 });
   });
 
-  it('preserves native projection sizing on larger screens unless snapping is enabled', () => {
-    expect(projectionRequestSize({ width: 800, height: 440 }, false))
-      .toEqual({ width: 800, height: 440 });
-    expect(projectionRequestSize({ width: 800, height: 440 }, true))
+  it('always snaps Android Auto on larger screens', () => {
+    expect(androidAutoRequestSize({ width: 800, height: 440 }))
       .toEqual({ width: 800, height: 480 });
-    expect(projectionRequestSize({ width: 1280, height: 720 }, false))
+    expect(androidAutoRequestSize({ width: 1248, height: 547 }))
       .toEqual({ width: 1280, height: 720 });
+    expect(androidAutoRequestSize({ width: 1280, height: 720 }))
+      .toEqual({ width: 1280, height: 720 });
+  });
+
+  it('uses a known-good 720p CarPlay stream on compact screens', () => {
+    expect(carplayRequestSize({ width: 400, height: 234 }))
+      .toEqual({ width: 1280, height: 720 });
+    expect(carplayRequestSize({ width: 480, height: 248 }))
+      .toEqual({ width: 1280, height: 720 });
+  });
+
+  it('always snaps CarPlay and enforces its 720p minimum', () => {
+    expect(carplayRequestSize({ width: 800, height: 440 }))
+      .toEqual({ width: 1280, height: 720 });
+    expect(carplayRequestSize({ width: 1248, height: 491 }))
+      .toEqual({ width: 1280, height: 720 });
+    expect(carplayRequestSize({ width: 1248, height: 547 }))
+      .toEqual({ width: 1280, height: 720 });
+    expect(carplayRequestSize({ width: 1280, height: 720 }))
+      .toEqual({ width: 1280, height: 720 });
+    expect(carplayRequestSize({ width: 1920, height: 1040 }))
+      .toEqual({ width: 1920, height: 1080 });
   });
 });
