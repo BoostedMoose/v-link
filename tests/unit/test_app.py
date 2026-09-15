@@ -14,6 +14,7 @@ def test_start_browser_passes_each_chromium_flag_as_separate_argument(monkeypatc
     monkeypatch.setattr(app_module.APPThread, '_browser_executable', lambda self: 'chromium')
     monkeypatch.setattr(app_module.subprocess, 'Popen', popen)
     monkeypatch.setattr(app_module.shared_state, 'isKiosk', False)
+    monkeypatch.setattr(app_module.shared_state, 'browserWindowSize', (400, 234))
 
     app_thread = app_module.APPThread(MagicMock())
     app_thread.start_browser()
@@ -22,8 +23,26 @@ def test_start_browser_passes_each_chromium_flag_as_separate_argument(monkeypatc
 
     assert '--no-default-browser-check' in command
     assert '--allow-insecure-localhost' in command
+    assert '--window-size=400,234' in command
     assert all(argument.count('--') == 1 for argument in command[2:])
     assert popen.call_args.kwargs['start_new_session'] is True
+
+
+def test_kiosk_uses_fullscreen_without_competing_maximize_flag(monkeypatch):
+    browser_process = MagicMock(pid=1234)
+    popen = MagicMock(return_value=browser_process)
+
+    monkeypatch.setattr(app_module.os, 'makedirs', MagicMock())
+    monkeypatch.setattr(app_module.APPThread, '_browser_executable', lambda self: 'chromium')
+    monkeypatch.setattr(app_module.subprocess, 'Popen', popen)
+    monkeypatch.setattr(app_module.shared_state, 'isKiosk', True)
+
+    thread = app_module.APPThread(MagicMock())
+    thread.start_browser()
+
+    command = popen.call_args.args[0]
+    assert '--kiosk' in command
+    assert '--start-maximized' not in command
 
 
 def test_browser_shutdown_cleans_up_reparented_children(monkeypatch):

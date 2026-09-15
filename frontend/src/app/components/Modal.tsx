@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import ReactDOM from 'react-dom';
 import styled from 'styled-components';
 import { Typography } from '@/theme/styles/Typography';
 import { Button } from '@/theme/styles/Inputs';
@@ -14,7 +13,7 @@ interface ContentProps {
 }
 
 const Overlay = styled.div<OverlayProps>`
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   width: 100%;
@@ -39,6 +38,8 @@ const Content = styled.div<ContentProps>`
   white-space: pre-line;
 
   min-width: 300px;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
   gap: 20px;
 
   display: flex;
@@ -48,6 +49,13 @@ const Content = styled.div<ContentProps>`
   opacity: ${({ $visible }) => ($visible ? 1 : 0)};
   transform: ${({ $visible }) => ($visible ? 'scale(1)' : 'scale(0.9)')};
   transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    width: calc(100% - 24px);
+    min-width: 0;
+    padding: 18px 12px;
+    gap: 10px;
+  }
 `;
 
 const Exit = styled.button`
@@ -85,7 +93,7 @@ const Modal = () => {
 
   if (!shouldRender) return null; // Prevent render when modal is fully closed
 
-  return ReactDOM.createPortal(
+  return (
     <Overlay $visible={modalSettings.visible}>
       <Content $visible={modalSettings.visible}>
         <Display2>{modalSettings.title}</Display2>
@@ -94,8 +102,7 @@ const Modal = () => {
         <Exit onClick={closeModal}>X</Exit>
         : null }
       </Content>
-    </Overlay>,
-    document.getElementById('root')!
+    </Overlay>
   );
 };
 

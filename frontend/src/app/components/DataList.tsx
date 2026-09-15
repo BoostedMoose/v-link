@@ -32,12 +32,24 @@ const List = styled.div`
   gap: 20px;
 
   margin-bottom: 7px;
+  @media (max-width: 520px), (max-height: 300px) {
+    padding-left: 6px;
+    padding-right: 6px;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
 `
 
 const Svg = styled.svg`
   width: 200px;
   height: 60px;
   border-radius: 12px;  /* Rounded edges for the button */
+
+  @media (max-width: 520px), (max-height: 300px) {
+    width: clamp(72px, 24vw, 116px);
+    height: 34px;
+    border-radius: 6px;
+  }
 `;
 
 const Divider = styled.div`
@@ -59,6 +71,11 @@ const Element = styled.div`
   width: 100%;
 
   margin-bottom: 7px;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    height: 26px;
+    margin-bottom: 1px;
+  }
 `
 
 type DashPageSettings = Record<string, { value: string; type: string }>;
@@ -225,7 +242,7 @@ const DataList = (dashPage: DashPageSettings, itemCount: number, columns: number
                 style={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: "10px",
+                    gap: "clamp(2px, 1vh, 10px)",
                     flex: 1,
                     width: "100%",
                 }}
@@ -238,7 +255,7 @@ const DataList = (dashPage: DashPageSettings, itemCount: number, columns: number
     // Return the layout with specified lists
     return (
         <Container>
-            <List style={{ display: "flex", flexDirection: "row", gap: "20px" }}>
+            <List style={{ display: "flex", flexDirection: "row" }}>
                 {rows}
             </List>
         </Container>

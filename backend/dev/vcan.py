@@ -84,7 +84,7 @@ def derive_engine_state(speed_kph, throttle, gear):
     s["ignitionretarding"]   = random.uniform(-6.0, 0.0) if (load > 0.5 and random.random() < 0.15) else 0.0
     s["desiredenginetorque"] = throttle * 85 + rpm_norm * 15 + random.gauss(0, 1)
     s["voltage"]             = (14.1 - load * 0.3 if s["rpm"] > 1000 else 12.4) + random.gauss(0, 0.05)
-    s["light"]               = 2.5
+    s["dashboard_brightness"] = 8
 
     return s
 
@@ -94,7 +94,7 @@ SMOOTH_K = {
     "intake": 0.03, "exhaustgastemp": 0.02, "lambda1": 0.15, "lambda2": 0.15,
     "shorttermfueltrim": 0.20, "longtermfueltrimidle": 0.002, "longtermfueltrimload": 0.002,
     "massairflowraw": 0.10, "massairflowfiltered": 0.05, "ignitionretarding": 0.30,
-    "relativeaircharge": 0.10, "desiredenginetorque": 0.10, "voltage": 0.05, "light": 0.01,
+    "relativeaircharge": 0.10, "desiredenginetorque": 0.10, "voltage": 0.05,
 }
 
 
@@ -135,7 +135,6 @@ class VCANThread(threading.Thread):
             (0x10, 0x82): "exhaustgastemp",
             (0x10, 0xB5): "relativeaircharge",
             (0x12, 0xCB): "desiredenginetorque",
-            (0x2F, 0x60): "light",
         }
 
     def run(self):
@@ -143,6 +142,7 @@ class VCANThread(threading.Thread):
             self.can_bus = can.interface.Bus(channel=self.channel, bustype='socketcan', bitrate=500000)
             while not self._stop_event.is_set():
                 self.update_state()
+                self.send_dashboard_brightness()
                 message = self.can_bus.recv(timeout=0.1)
                 if message:
                     self.check_message(message)
@@ -171,6 +171,11 @@ class VCANThread(threading.Thread):
             param = tuple(message.data[3:5])
             if param in self.param_map:
                 self.send_response(param, self.param_map[param])
+
+    def send_dashboard_brightness(self):
+        level = max(0, min(15, int(self.state.get("dashboard_brightness", 8))))
+        data = bytearray([level, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        self.can_bus.send(can.Message(arbitration_id=0x0100082C, data=data, is_extended_id=True))
 
     def send_response(self, param_bytes, key):
         encoded = self.encode_value(key, self.state.get(key, 0.0))
@@ -210,8 +215,6 @@ class VCANThread(threading.Thread):
                 return list(struct.pack(">H", int(value * 32 / 0.75)))
             elif key == "desiredenginetorque":
                 return list(struct.pack(">H", int(value * 65536 / 100)))
-            elif key == "light":
-                return list(struct.pack(">H", int(value * 1023.0 / 5.0)))
         except Exception:
             return None
 

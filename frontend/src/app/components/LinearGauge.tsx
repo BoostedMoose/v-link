@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
 import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
 import { Display3, Typography } from '@/theme/styles/Typography';
+import { isCompactViewport } from '@/app/helper/Layout';
 
 // Styled container for the gauge
 const Container = styled.div`
@@ -28,8 +29,15 @@ const Speed = styled.div`
     flex-direction: row;
     align-items: center;
     justify-content: center;
-`;
 
+    @media (max-width: 520px), (max-height: 300px) {
+        top: 42%;
+        gap: 2px;
+
+        h2 { font-size: 24pt; margin: 0; }
+        h4 { font-size: 9pt; margin: 0; transform: none !important; }
+    }
+`;
 const RPM = styled.div`
     background: none;
     position: absolute;
@@ -38,8 +46,16 @@ const RPM = styled.div`
     gap: 5px;
     display: flex;
     align-items: flex-end;
-`;
 
+    @media (max-width: 520px), (max-height: 300px) {
+        right: 6px;
+        bottom: 0;
+        gap: 2px;
+
+        h1 { font-size: 38pt; margin: 0; line-height: 0.85; }
+        p { font-size: 9pt; margin: 0; }
+    }
+`;
 const Custom = styled.div`
     background: none;
     position: absolute;
@@ -49,6 +65,16 @@ const Custom = styled.div`
     gap: 5px;
     display: flex;
     align-items: center;
+
+    @media (max-width: 520px), (max-height: 300px) {
+        height: 28px;
+        top: 2px;
+        left: 6px;
+        gap: 2px;
+
+        h2 { font-size: 20pt; margin: 0; }
+        p { font-size: 9pt; margin: 0; }
+    }
 `;
 
 type ModuleSelector = ((select: (s: ModuleState) => unknown) => unknown) | undefined;
@@ -76,6 +102,7 @@ const LinearGauge = () => {
     const data = DATA((state) => state.data);
 
     const settings = APP((state) => state.settings.dash_race) as DashRaceSettings | undefined;
+    const compact = isCompactViewport(APP((state) => state.system.windowSize));
     const themeColor = useThemeColor();
 
     // Extract gauge settings at top level
@@ -149,7 +176,7 @@ const LinearGauge = () => {
     const [ready, setReady] = useState(false);
 
     // Configuration constants
-    const padding = 20;
+    const padding = compact ? 8 : 20;
     const reverseMarkers = true;
 
     // Memoize scale calculation
@@ -161,7 +188,7 @@ const LinearGauge = () => {
             };
         }
         return { x: 1, y: 1 };
-    }, [width, height, viewBox]);
+    }, [width, height, viewBox, padding]);
 
     // Memoized resize handler
     const handleResize = useCallback(() => {
@@ -402,7 +429,7 @@ const LinearGauge = () => {
             return limitPositions.slice(0, -1).map((point, index) => {
                 const startX = padding + point.x * scale.x;
                 const startY = padding + point.y * scale.y;
-                const endY = 12 + padding + point.y * scale.y;
+                const endY = (compact ? 7 : 12) + padding + point.y * scale.y;
 
                 return (
                     <line
@@ -412,7 +439,7 @@ const LinearGauge = () => {
                         x2={startX}
                         y2={endY}
                         stroke={theme.colors.theme[themeColor].active}
-                        strokeWidth="8"
+                        strokeWidth={compact ? 4 : 8}
                     />
                 );
             });
@@ -427,8 +454,8 @@ const LinearGauge = () => {
                     <text
                         key={`label-${index}`}
                         x={labelX}
-                        y={labelY + 30}
-                        fontSize="12"
+                        y={labelY + (compact ? 14 : 30)}
+                        fontSize={compact ? 8 : 12}
                         fontFamily="Arial, sans-serif"
                         fill="#DBDBDB"
                         textAnchor="middle"
@@ -440,7 +467,7 @@ const LinearGauge = () => {
         };
 
         const renderScale = () => {
-            if (maxPositions.length < 2) return null;
+            if (compact || maxPositions.length < 2) return null;
             const secondMarker = maxPositions[1];
             const labelX = padding + secondMarker.x * scale.x;
             const labelY = padding + secondMarker.y * scale.y;
@@ -449,8 +476,8 @@ const LinearGauge = () => {
                 <text
                     key="scale"
                     x={labelX + 3}
-                    y={labelY + 50}
-                    fontSize="14"
+                    y={labelY + (compact ? 24 : 50)}
+                    fontSize={compact ? 9 : 14}
                     fontFamily="Arial, sans-serif"
                     fontWeight="700"
                     fill="#DBDBDB"
@@ -551,7 +578,7 @@ const LinearGauge = () => {
             renderRedline,
             renderValue
         };
-    }, [ready, bar, spline, gaugeData, markerCalculations, scale, padding, width, height, theme.colors, themeColor, gradientGenerators]);
+    }, [ready, bar, spline, gaugeData, markerCalculations, scale, padding, width, height, theme.colors, themeColor, gradientGenerators, compact]);
 
     return (
         <Container ref={containerRef}>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="quit" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <path d="M13 5H6.5A2.5 2.5 0 0 0 4 7.5v17A2.5 2.5 0 0 0 6.5 27H13" />
+  <line x1="12" y1="16" x2="28" y2="16" />
+  <polyline points="22 10 28 16 22 22" />
+</svg>
