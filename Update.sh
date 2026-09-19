@@ -3,6 +3,10 @@
 set -eu
 
 APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ ! -f "$APP_DIR/updater/releases.py" ]; then
+    echo "V-Link updater files are missing. Run Update.sh from an installed V-Link directory containing updater/." >&2
+    exit 1
+fi
 PYTHON="$APP_DIR/venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON=python3
 

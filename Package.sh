@@ -12,19 +12,21 @@ fi
 echo "Building V-Link frontend..."
 npm --prefix frontend run build
 
-echo "Preparing release archive..."
-rm -rf dist
-mkdir -p dist/frontend
-cp -a frontend/dist dist/frontend/dist
-cp -a backend dist/backend
-cp -a updater dist/updater
-cp V-Link.py requirements.txt Update.sh dist/
-find dist -type d -name __pycache__ -prune -exec rm -rf {} +
-find dist -type f -name '*.pyc' -delete
+echo "Preparing release assets..."
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+mkdir -p "$STAGE/package/frontend" "$STAGE/assets"
+cp -a frontend/dist "$STAGE/package/frontend/dist"
+cp -a backend "$STAGE/package/backend"
+cp -a updater "$STAGE/package/updater"
+cp V-Link.py requirements.txt Update.sh "$STAGE/package/"
+cp Install.sh Uninstall.sh Update.sh "$STAGE/assets/"
+find "$STAGE/package" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$STAGE/package" -type f -name '*.pyc' -delete
 
 COMMIT=$(git rev-parse HEAD)
 BRANCH=$(git symbolic-ref -q --short HEAD || echo detached)
-python3 - "$COMMIT" "$BRANCH" "$ROOT/dist/.vlink-release.json" <<'PY'
+python3 - "$COMMIT" "$BRANCH" "$STAGE/package/.vlink-release.json" <<'PY'
 import json
 import sys
 
@@ -34,5 +36,8 @@ with open(destination, "w", encoding="utf-8") as output:
     output.write("\n")
 PY
 
-(cd dist && zip -qr V-Link.zip V-Link.py requirements.txt Update.sh updater frontend backend .vlink-release.json)
-echo "Created $ROOT/dist/V-Link.zip from $COMMIT"
+(cd "$STAGE/package" && zip -qr "$STAGE/assets/V-Link.zip" V-Link.py requirements.txt Update.sh updater frontend backend .vlink-release.json)
+rm -rf dist
+mv "$STAGE/assets" dist
+echo "Created release assets from $COMMIT:"
+printf '  %s\n' "$ROOT/dist/Install.sh" "$ROOT/dist/Uninstall.sh" "$ROOT/dist/Update.sh" "$ROOT/dist/V-Link.zip"
