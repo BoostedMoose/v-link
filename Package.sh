@@ -9,6 +9,17 @@ if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
     exit 1
 fi
 
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+package = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
+lock = json.loads(Path("frontend/package-lock.json").read_text(encoding="utf-8"))
+version = package["version"]
+if lock["version"] != version or lock["packages"][""]["version"] != version:
+    raise SystemExit("Frontend package and lockfile versions differ. Run npm version in frontend/ first.")
+PY
+
 echo "Building V-Link frontend..."
 npm --prefix frontend run build
 
@@ -17,6 +28,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/package/frontend" "$STAGE/assets"
 cp -a frontend/dist "$STAGE/package/frontend/dist"
+cp frontend/package.json "$STAGE/package/frontend/package.json"
 cp -a backend "$STAGE/package/backend"
 cp -a updater "$STAGE/package/updater"
 cp V-Link.py requirements.txt Update.sh "$STAGE/package/"
