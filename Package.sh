@@ -1,44 +1,38 @@
 #!/bin/bash
-cd /home/$USER/Development/v-link
+set -euo pipefail
 
-echo "VLINK-Packager"
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
 
-echo "Deleting old dist files..."
-rm -rf dist/ frontend/dist/
-echo "Done."
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+    echo "Commit all source changes before packaging so the archive matches its commit manifest." >&2
+    exit 1
+fi
 
-echo "Creating ./dist/ directory..."
-    mkdir dist/
-    mkdir dist/frontend/
-    mkdir dist/backend/
-echo "Done."
+echo "Building V-Link frontend..."
+npm --prefix frontend run build
 
-echo "Packaging frontend..."
-cd frontend/
-npm run build
-cd ..
-echo "Done."
+echo "Preparing release archive..."
+rm -rf dist
+mkdir -p dist/frontend
+cp -a frontend/dist dist/frontend/dist
+cp -a backend dist/backend
+cp -a updater dist/updater
+cp V-Link.py requirements.txt Update.sh dist/
+find dist -type d -name __pycache__ -prune -exec rm -rf {} +
+find dist -type f -name '*.pyc' -delete
 
-echo "Copying files..."
-cp -r frontend/dist/ dist/frontend/dist
-cp -r backend/ dist/
+COMMIT=$(git rev-parse HEAD)
+BRANCH=$(git symbolic-ref -q --short HEAD || echo detached)
+python3 - "$COMMIT" "$BRANCH" "$ROOT/dist/.vlink-release.json" <<'PY'
+import json
+import sys
 
-cp V-Link.py dist/V-Link.py
-cp requirements.txt dist/requirements.txt
-cp Install.sh dist/Install.sh
-cp Uninstall.sh dist/Uninstall.sh
-cp Update.sh dist/Update.sh
-cp Patch.sh dist/Patch.sh
-echo "Done."
+commit, branch, destination = sys.argv[1:]
+with open(destination, "w", encoding="utf-8") as output:
+    json.dump({"tag": None, "branch": branch, "commit": commit, "prerelease": None}, output, indent=2)
+    output.write("\n")
+PY
 
-echo "Creating Zip..."
-cd dist/
-zip -r V-Link.zip V-Link.py Patch.sh requirements.txt frontend/ backend/
-echo "Done."
-
-echo "Cleaning up..."
-rm -rf V-Link.py Patch.sh requirements.txt frontend/ backend/
-
-cd ..
-
-echo "All Done."
+(cd dist && zip -qr V-Link.zip V-Link.py requirements.txt Update.sh updater frontend backend .vlink-release.json)
+echo "Created $ROOT/dist/V-Link.zip from $COMMIT"
