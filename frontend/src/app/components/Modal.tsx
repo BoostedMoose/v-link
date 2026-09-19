@@ -31,15 +31,23 @@ const Overlay = styled.div<OverlayProps>`
 `;
 
 const Content = styled.div<ContentProps>`
+  position: relative;
+  box-sizing: border-box;
   background: #151515;
-  padding: 30px;
+  padding: clamp(12px, 3vh, 30px);
   border-radius: 10px;
   text-align: center;
   color: none;
   white-space: pre-line;
 
-  min-width: 300px;
-  gap: 20px;
+  min-width: min(300px, calc(100vw - 20px));
+  max-width: calc(100vw - 20px);
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+  gap: clamp(8px, 2vh, 20px);
+
+  > h3 { margin: 0; line-height: 1.1; max-width: calc(100% - 52px); }
 
   display: flex;
   flex-direction: column;
@@ -52,17 +60,20 @@ const Content = styled.div<ContentProps>`
 
 const Exit = styled.button`
   position: absolute;
-  top: -30px;
-  right: -30px;
+  top: 8px;
+  right: 8px;
   border: none;
-  border-radius: 25px;
-  width: 25px;
-  height: 25px;
-  background: #151515;
-  font-size: 10px;
+  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  background: #303030;
+  font-size: 24px;
+  line-height: 1;
   font-weight: bold;
   cursor: pointer;
   color: #DBDBDB;
+
+  &:hover, &:focus-visible { background: #505050; }
 `;
 
 const Modal = () => {
@@ -91,7 +102,7 @@ const Modal = () => {
         <Display2>{modalSettings.title}</Display2>
         {modalSettings.content}
         {modalSettings.exit ? 
-        <Exit onClick={closeModal}>X</Exit>
+        <Exit type="button" aria-label="Close modal" onClick={closeModal}>×</Exit>
         : null }
       </Content>
     </Overlay>,

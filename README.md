@@ -19,7 +19,7 @@ The heart of this project is the open source **V-Link app**. It's running native
 
 ## Updating and downgrading
 
-In **Settings → System → Update**, choose **Stable** or **Prerelease**, then select a release. Prereleases are grouped by branch. The picker shows the installed commit and the exact commit behind the selected release tag. Older releases are available in the same list for downgrades. The app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, and reboots. If the download or archive check fails, the installed app files are kept; the app stays stopped so you can inspect the error in the updater terminal.
+In **Settings → System → Update**, choose **Stable** or **Prerelease**, then select a release. Prereleases are grouped by branch and show a seven-character commit hash. Older releases are available in the same list for downgrades. If GitHub is unavailable while browsing releases or starting an update, the picker offers Retry and the app keeps running. Once an update starts, the app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, and reboots. If the download or archive check then fails, the installed app files are kept; the app stays stopped so you can inspect the error in the updater terminal.
 
 The standalone updater is also available on the Pi:
 

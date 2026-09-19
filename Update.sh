@@ -27,5 +27,6 @@ if "$PYTHON" "$APP_DIR/updater/releases.py" --app-dir "$APP_DIR" "$@"; then
     sudo reboot
 else
     echo "Update failed or was cancelled. The installed app was kept."
+    echo "If the app closed for this update, reboot or run: $PYTHON $APP_DIR/V-Link.py"
     exit 1
 fi
