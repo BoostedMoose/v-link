@@ -3,16 +3,18 @@ import os
 import time
 import subprocess
 import eventlet
+from eventlet import tpool
 
 #eventlet.monkey_patch()
 
-from flask                  import Flask, send_from_directory, render_template
+from flask                  import Flask, send_from_directory, render_template, jsonify
 from flask_socketio         import SocketIO
 from flask_cors             import CORS
 
 from .                      import settings
 from .media                 import media_api
 from .shared.shared_state   import shared_state
+from updater.releases       import UpdateError, commit_sha, get_release, installed_release, list_releases
 
 from .threads.cam         import CAMThread
 
@@ -128,6 +130,23 @@ class ServerThread(threading.Thread):
     @server.route('/')
     def serve_index():
         return render_template('index.html')
+
+    @server.route('/api/releases')
+    def serve_releases():
+        try:
+            catalogue = tpool.execute(list_releases)
+            catalogue['installed'] = installed_release(os.path.join(os.path.dirname(__file__), '..'))
+            return jsonify(catalogue)
+        except UpdateError as error:
+            return jsonify({'error': str(error)}), 502
+
+    @server.route('/api/releases/<int:release_id>/commit')
+    def serve_release_commit(release_id):
+        try:
+            release = tpool.execute(get_release, release_id)
+            return jsonify({'commit': tpool.execute(commit_sha, release['tag_name'])})
+        except UpdateError as error:
+            return jsonify({'error': str(error)}), 502
 
     # Route to serve static files (js, css, etc.) from the 'dist/assets' folder
     @server.route('/assets/<path:filename>')
@@ -397,9 +416,17 @@ class ServerThread(threading.Thread):
             socketio.emit('reverse', shared_state.reverseStatus.is_set(), namespace="/sys")
 
         elif args == 'update':
-            # Updates the application
-            logger.info(f'[Server] Update Application')
+            release_id = payload.get('release_id') if isinstance(payload, dict) else None
+            try:
+                release = tpool.execute(get_release, release_id)
+            except UpdateError as error:
+                return {'ok': False, 'error': str(error)}
+            if shared_state.update_event.is_set() or shared_state.update:
+                return {'ok': False, 'error': 'An update is already in progress'}
+            logger.info(f"[Server] Installing release {release['tag_name']} ({release_id})")
+            shared_state.update_release_id = release_id
             shared_state.update_event.set()
+            return {'ok': True}
 
         elif args == 'ign':
             # Sends the current ignition status to the frontend

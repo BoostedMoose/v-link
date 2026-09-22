@@ -21,6 +21,7 @@
 import sys
 import os
 import subprocess
+import shlex
 
 
 def activate_venv():
@@ -529,13 +530,19 @@ if __name__ == '__main__':
                 # Launch updater in a new terminal window
                 try:
                     logger.info('Starting update...')
+                    command = shlex.join(['sh', script_path, '--release-id', str(shared_state.update_release_id)])
                     subprocess.Popen([
                         'lxterminal',
                         f'--title=V-Link Updater',
                         '--command',
-                        f"sh -c 'sh \"{script_path}\"; exec bash'"
+                        'sh -c ' + shlex.quote(command + '; exec bash')
                     ])
                 except Exception as e:
-                    logger.error(f'Update failed: {e}')
+                    logger.error(f'Could not open updater terminal: {e}. Starting updater in background.')
+                    log_path = os.path.join(current_dir, 'logs', 'update.log')
+                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                    with open(log_path, 'a', encoding='utf-8') as update_log:
+                        subprocess.Popen(['sh', script_path, '--release-id', str(shared_state.update_release_id)],
+                                         stdout=update_log, stderr=subprocess.STDOUT, start_new_session=True)
 
             sys.exit(0)

@@ -17,6 +17,26 @@ The heart of this project is the open source **V-Link app**. It's running native
 
 # Installation
 
+## Updating and downgrading
+
+In **Settings → System → Update**, choose **Stable** or **Prerelease**, then select a release. Prereleases are grouped by branch and show a seven-character commit hash. Older releases are available in the same list for downgrades. If GitHub is unavailable while browsing releases or starting an update, the picker offers Retry and the app keeps running. Once an update starts, the app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, and reboots. If the download or archive check then fails, the installed app files are kept; the app stays stopped so you can inspect the error in the updater terminal.
+
+The standalone updater is also available on the Pi:
+
+```sh
+sh ~/v-link/Update.sh
+```
+
+It lists published releases with a `V-Link.zip` asset and prompts for a release number. This remains available after downgrading to a release that predates the in-app picker. On installations made before the updater was included in the ZIP, install a new release package once to get the standalone updater.
+
+### Creating releases
+
+`frontend/package.json` is the source of the app version. The UI and Python app read it, and the release ZIP includes it. To set a version, run `npm version 3.2.0 --no-git-tag-version` from `frontend/`; this also updates `frontend/package-lock.json`. Use a prerelease version such as `3.2.0-beta.1` when appropriate. The root `package.json` is a separate Node package. The packager checks that the frontend package and lockfile versions match.
+
+Commit all source changes and run `./Package.sh` from the exact commit you will tag. Upload the four files in `dist/` as separate GitHub release assets: `Install.sh`, `Uninstall.sh`, `Update.sh`, and `V-Link.zip`. The packager refuses a dirty checkout. The ZIP contains the app and its updater; the installer and uninstaller are separate downloads. The standalone `Update.sh` asset is a launcher for an existing installation that also contains `updater/`. The installer currently installs the latest stable release by default, even if downloaded from a prerelease page. The package contains a commit manifest; the updater checks that its hash matches the release tag before installing. Mark a prerelease with GitHub's **Set as a pre-release** option. When creating its tag in GitHub, choose the source branch in **Target**. For an existing tag, put `V-Link-Branch: dev` (or another branch name, such as `factory-screen`) on its own line in the release notes; a tag like `dev/v3.2.0-beta.1` also identifies the branch. This keeps prereleases from different branches separate in the picker.
+
+Updates do not run `Patch.sh` automatically. A release that requires system configuration changes should include explicit migration instructions in its release notes.
+
 ### > System Requirements:
 ```
 Raspberry Pi 3/4/5

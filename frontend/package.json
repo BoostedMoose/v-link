@@ -1,7 +1,7 @@
 {
   "name": "v-link",
   "productName": "V-Link",
-  "version": "3.1.0",
+  "version": "3.2.0-beta.1",
   "private": false,
   "author": {
     "name": "Louis Raymond",
@@ -47,7 +47,6 @@
     "react-use-draggable-scroll": "^0.4.7",
     "sass": "^1.69.5",
     "socket.io-client": "^4.7.2",
-    "socketmost": "^2.0.6",
     "stream-browserify": "^3.0.0",
     "styled-components": "^6.1.14",
     "util": "^0.12.5",
@@ -58,6 +57,7 @@
     "@esbuild-plugins/node-modules-polyfill": "^0.2.2",
     "@eslint/js": "^9.39.4",
     "@rollup/plugin-inject": "^5.0.5",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/file-saver": "^2.0.7",

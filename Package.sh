@@ -1,44 +1,55 @@
 #!/bin/bash
-cd /home/$USER/Development/v-link
+set -euo pipefail
 
-echo "VLINK-Packager"
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$ROOT"
 
-echo "Deleting old dist files..."
-rm -rf dist/ frontend/dist/
-echo "Done."
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+    echo "Commit all source changes before packaging so the archive matches its commit manifest." >&2
+    exit 1
+fi
 
-echo "Creating ./dist/ directory..."
-    mkdir dist/
-    mkdir dist/frontend/
-    mkdir dist/backend/
-echo "Done."
+python3 - <<'PY'
+import json
+from pathlib import Path
 
-echo "Packaging frontend..."
-cd frontend/
-npm run build
-cd ..
-echo "Done."
+package = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
+lock = json.loads(Path("frontend/package-lock.json").read_text(encoding="utf-8"))
+version = package["version"]
+if lock["version"] != version or lock["packages"][""]["version"] != version:
+    raise SystemExit("Frontend package and lockfile versions differ. Run npm version in frontend/ first.")
+PY
 
-echo "Copying files..."
-cp -r frontend/dist/ dist/frontend/dist
-cp -r backend/ dist/
+echo "Building V-Link frontend..."
+npm --prefix frontend run build
 
-cp V-Link.py dist/V-Link.py
-cp requirements.txt dist/requirements.txt
-cp Install.sh dist/Install.sh
-cp Uninstall.sh dist/Uninstall.sh
-cp Update.sh dist/Update.sh
-cp Patch.sh dist/Patch.sh
-echo "Done."
+echo "Preparing release assets..."
+STAGE=$(mktemp -d)
+trap 'rm -rf "$STAGE"' EXIT
+mkdir -p "$STAGE/package/frontend" "$STAGE/assets"
+cp -a frontend/dist "$STAGE/package/frontend/dist"
+cp frontend/package.json "$STAGE/package/frontend/package.json"
+cp -a backend "$STAGE/package/backend"
+cp -a updater "$STAGE/package/updater"
+cp V-Link.py requirements.txt Update.sh "$STAGE/package/"
+cp Install.sh Uninstall.sh Update.sh "$STAGE/assets/"
+find "$STAGE/package" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$STAGE/package" -type f -name '*.pyc' -delete
 
-echo "Creating Zip..."
-cd dist/
-zip -r V-Link.zip V-Link.py Patch.sh requirements.txt frontend/ backend/
-echo "Done."
+COMMIT=$(git rev-parse HEAD)
+BRANCH=$(git symbolic-ref -q --short HEAD || echo detached)
+python3 - "$COMMIT" "$BRANCH" "$STAGE/package/.vlink-release.json" <<'PY'
+import json
+import sys
 
-echo "Cleaning up..."
-rm -rf V-Link.py Patch.sh requirements.txt frontend/ backend/
+commit, branch, destination = sys.argv[1:]
+with open(destination, "w", encoding="utf-8") as output:
+    json.dump({"tag": None, "branch": branch, "commit": commit, "prerelease": None}, output, indent=2)
+    output.write("\n")
+PY
 
-cd ..
-
-echo "All Done."
+(cd "$STAGE/package" && zip -qr "$STAGE/assets/V-Link.zip" V-Link.py requirements.txt Update.sh updater frontend backend .vlink-release.json)
+rm -rf dist
+mv "$STAGE/assets" dist
+echo "Created release assets from $COMMIT:"
+printf '  %s\n' "$ROOT/dist/Install.sh" "$ROOT/dist/Uninstall.sh" "$ROOT/dist/Update.sh" "$ROOT/dist/V-Link.zip"
