@@ -53,6 +53,9 @@ beforeEach(() => {
   })
   mocks.findDevice.mockResolvedValue(null)
   APP.getState().update(state => {
+    state.settings = {}
+    state.system.windowSize = { width: 800, height: 480 }
+    state.system.carplaySize = { width: 800, height: 460 }
     state.system.carplay.phase = 'idle'
     state.system.carplay.dongle = false
     state.system.carplay.worker = false
@@ -89,6 +92,47 @@ it('ignores device discovery completing after teardown', async () => {
   result.unmount()
   await act(async () => { resolve({}) })
   expect(usbWorker.postMessage.mock.calls.some(([message]) => message.type === 'start')).toBe(false)
+})
+
+it('starts compact projections with separate CarPlay and Android Auto sizes', async () => {
+  APP.getState().update(state => {
+    state.system.windowSize = { width: 400, height: 234 }
+    state.system.carplaySize = { width: 400, height: 234 }
+  })
+  mocks.findDevice.mockResolvedValue({})
+
+  mount()
+  await act(async () => {})
+
+  const usbWorker = TestWorker.instances[0]
+  expect(usbWorker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+    type: 'start',
+    payload: expect.objectContaining({
+      config: expect.objectContaining({ width: 1280, height: 720 }),
+      androidAutoSize: { width: 800, height: 480 },
+    }),
+  }))
+})
+
+it('positions the projection below the reserved top bar on larger displays', async () => {
+  APP.getState().update(state => {
+    state.system.windowSize = { width: 1280, height: 720 }
+    state.system.carplaySize = { width: 1280, height: 680 }
+  })
+
+  const result = mount()
+  await act(async () => {})
+
+  const video = result.container.querySelector('#video') as HTMLCanvasElement
+  const stream = video.parentElement
+  expect(stream).toHaveStyle({
+    top: '40px',
+    left: '0px',
+    width: '1280px',
+    height: '680px',
+  })
+  expect(video).toHaveStyle({ width: '100%', height: '100%' })
+  expect(video.style.objectFit).toBe('')
 })
 
 it('does not replenish recovery from one valid packet followed by failure', async () => {

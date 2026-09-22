@@ -52,7 +52,9 @@ export default function ProjectionRuntime(props: { command: string; commandCount
   // packet before each failure must not turn bounded recovery into a loop.
   const healthy = useCallback(() => { attempts.current = 0 }, [])
 
-  // A fresh browser must reset the physical dongle too, not just recovery workers.
-  return running ? <Carplay {...props} key={runtime} resetDevice
+  // Start a fresh browser against the already idle dongle. A physical reset is
+  // reserved for recovery after a real startup/transport failure; resetting on
+  // every launch can make this dongle disappear for more than ten seconds.
+  return running ? <Carplay {...props} key={runtime} resetDevice={runtime > 0}
     onRecovery={recover} onHealthy={healthy} /> : null
 }

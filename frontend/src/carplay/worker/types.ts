@@ -31,6 +31,7 @@ export type AudioPlayerPayload = {
 
 export type StartPayload = {
   config: Partial<DongleConfig>
+  androidAutoSize: { width: number; height: number }
   resetDevice?: boolean
 }
 
