@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, ReactNode } from 'react';
 import CanSettings from './CanSettings';
 import AudioSettings from './AudioSettings';
+import ReleaseChooser from './ReleaseChooser';
 import { getAudioSettingsFromAppSettings, withAudioSettings, type AudioSettingsValues } from './audioSettingsState';
 
 import styled, { useTheme } from 'styled-components';
@@ -402,31 +403,7 @@ const Settings = () => {
     socket.most.emit("force_switch");
   }
 
-  const checkUpdate = async () => {
-    const githubRepo = "BoostedMoose/v-link"; // Replace with your GitHub repository
-
-    try {
-      const response = await fetch(
-        `https://api.github.com/repos/${githubRepo}/releases/latest`
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch the latest release.");
-      }
-
-      const data = await response.json();
-      const latestVersion = data.tag_name; // This is the version (e.g., "v1.2.0")
-
-
-      if (latestVersion === versionNumber)
-        openModal("No Updates available.", "Check back again later :)", undefined, undefined)
-      else {
-        openModal("New update available!", `Current: ${versionNumber} \n\n Latest: ${latestVersion}`, "UPDATE NOW", () => systemTask('update'))
-      }
-    } catch (error) {
-      openModal("Error checking for updates:", error instanceof Error ? error.message : String(error), undefined, undefined)
-    }
-  }
+  const checkUpdate = () => openModal('V-Link releases', <ReleaseChooser currentVersion={versionNumber} />);
 
 
   // Toggle Threads

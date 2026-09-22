@@ -34,6 +34,7 @@ class SharedState:
         self.hdmiStatus = False
 
         self.update = False
+        self.update_release_id = None
 
         # Backlight settings (runtime). None means "not initialized yet".
         self.backlight_daylight = None
