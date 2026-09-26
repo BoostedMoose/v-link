@@ -321,6 +321,20 @@ def test_firstboot_valid_hash_stages_installer_and_user_selection():
         assert "Multiple eligible users" in selector
 
 
+def test_firstboot_installer_uses_tty8_and_returns_to_tty1():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        result = stage_firstboot(root / "boot", root / "system")
+        assert result.returncode == 0, (root / "boot/v-link-firstboot.log").read_text()
+        unit = (root / "system/etc/systemd/system/v-link-firstboot.service").read_text()
+        assert "Conflicts=getty@tty8.service display-manager.service lightdm.service" in unit
+        assert "ExecStartPre=-/usr/bin/chvt 8" in unit
+        assert "TTYPath=/dev/tty8" in unit
+        assert "getty@tty1.service" in unit
+        assert "ExecStopPost=-/usr/bin/chvt 1" in unit
+        assert "TTYPath=/dev/tty1" not in unit
+
+
 def test_firstboot_direct_removes_only_its_temporary_cmdline_arguments():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -361,6 +375,35 @@ def test_lite_installer_cache_and_cleanup_remain_scoped():
     assert "/var/log/v-link-firstboot-installer.log" in source
     assert "/boot/firmware/v-link-firstboot-installer.log" in source
     assert "/usr/local/sbin/v-link-firstboot-user" in source
+
+
+def test_branch_selector_has_no_recommended_or_automatic_lite_choice():
+    source = INSTALL.read_text()
+    selector = source.split("select_github_branch() {", 1)[1].split(
+        "\nselect_install_source() {", 1)[0]
+    assert "recommended Lite test" not in selector
+    assert "default_index" not in selector
+    assert "Select branch number: " in selector
+    assert '[[ -n "$choice" ]] || choice=' not in selector
+
+
+def test_interactive_steps_clear_and_network_blocks_source_selection():
+    source = INSTALL.read_text()
+    clear = source.split("clear_screen() {", 1)[1].split("\nshow_interactive_screen() {", 1)[0]
+    wait = source.split("wait_for_internet() {", 1)[1].split(
+        "\ncleanup_first_boot_stage() {", 1)[0]
+    main = source.split('if [[ "$ASSUME_YES" != true ]]; then', 1)[1].split(
+        'elif [[ "$SOURCE_CHOICE_EXPLICIT"', 1)[0]
+
+    assert "-t 0 && -w /dev/tty" in clear
+    assert 'output=/dev/tty' in clear
+    assert 'tput clear >"$output"' in clear
+    assert "Waiting for network..." in wait
+    assert "internet_available" in wait
+    assert "read -r -t 3" in wait
+    assert main.index("wait_for_internet") < main.index("select_install_source")
+    for title in ("Installation source", "Source branch", "Hardware", "Confirmation"):
+        assert f'show_interactive_screen "{title}"' in source
 
 
 def test_overlay_has_normal_handoff_and_bounded_fail_open():

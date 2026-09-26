@@ -424,15 +424,34 @@ log() {
 }
 
 clear_screen() {
-    [[ -t 1 ]] || return 0
+    local output=""
+    if [[ -t 1 ]]; then
+        output=/dev/stdout
+    elif [[ -t 0 && -w /dev/tty ]]; then
+        # First boot logs through tee, so stdout is a pipe while stdin still
+        # owns the installer VT. Clear the real console without logging ANSI.
+        output=/dev/tty
+    else
+        return 0
+    fi
 
     if command -v tput >/dev/null 2>&1 && \
        [[ -n "${TERM:-}" && "${TERM:-}" != dumb ]]; then
-        if tput clear 2>/dev/null; then
+        if tput clear >"$output" 2>/dev/null; then
             return 0
         fi
     fi
-    printf '\033[2J\033[H'
+    printf '\033[2J\033[H' >"$output"
+}
+
+show_interactive_screen() {
+    local title="$1"
+
+    clear_screen
+    printf '\n============================================================\n'
+    printf '                    V-Link Lite Installer\n'
+    printf '                    Setup — %s\n' "$title"
+    printf '============================================================\n\n'
 }
 
 show_phase() {
@@ -540,11 +559,8 @@ confirm() {
 }
 
 print_welcome() {
+    show_interactive_screen "Network"
     cat <<'EOF'
-
-============================================================
-                    V-Link Lite Installer
-============================================================
 This installer configures Raspberry Pi OS Lite as a dedicated
 V-Link kiosk. You will be shown the source, hardware mode and
 important system changes before anything is installed.
@@ -557,36 +573,45 @@ internet_available() {
 
 wait_for_internet() {
     local answer=""
+    local first_attempt=true
 
-    cat <<'EOF'
+    while true; do
+        if [[ "$first_attempt" != true ]]; then
+            show_interactive_screen "Network"
+        fi
+        cat <<'EOF'
+Waiting for network...
 
-INTERNET CONNECTION REQUIRED
   V-Link Lite downloads packages and, for development installs, source code
   directly from GitHub. Connect Ethernet or configure Wi-Fi before continuing.
 EOF
-
-    while ! internet_available; do
-        printf '\nNo Internet connection detected.\n'
-        if command -v nmtui >/dev/null 2>&1; then
-            printf '  [Enter] Retry   [N] Network/Wi-Fi settings   [Q] Quit\n'
-        else
-            printf '  [Enter] Retry   [Q] Quit\n'
+        if internet_available; then
+            printf '\nInternet connection OK.\n'
+            return
         fi
-        read -r -p '> ' answer
-        case "$answer" in
-            [Nn])
-                if command -v nmtui >/dev/null 2>&1; then
-                    nmtui
-                else
-                    printf 'NetworkManager text UI is not available. Configure Wi-Fi in Raspberry Pi Imager or use Ethernet.\n'
-                fi
-                ;;
-            [Qq]) die "installation cancelled; Internet is required" ;;
-            *) ;;
-        esac
-    done
 
-    printf '\nInternet connection OK.\n'
+        printf '\nNo Internet connection detected. Retrying automatically in 3 seconds.\n'
+        if command -v nmtui >/dev/null 2>&1; then
+            printf '  [Enter] Retry now   [N] Network/Wi-Fi settings   [Q] Quit\n'
+        else
+            printf '  [Enter] Retry now   [Q] Quit\n'
+        fi
+        answer=""
+        if read -r -t 3 -p '> ' answer; then
+            case "$answer" in
+                [Nn])
+                    if command -v nmtui >/dev/null 2>&1; then
+                        nmtui
+                    else
+                        printf 'NetworkManager text UI is not available. Configure Wi-Fi in Raspberry Pi Imager or use Ethernet.\n'
+                    fi
+                    ;;
+                [Qq]) die "installation cancelled; Internet is required" ;;
+                *) ;;
+            esac
+        fi
+        first_attempt=false
+    done
 }
 
 cleanup_first_boot_stage() {
@@ -671,10 +696,12 @@ fetch_github_branch_names() {
 select_github_branch() {
     local branches=()
     local choice=""
-    local index default_index=""
+    local index
 
-    log "Loading branches from GitHub"
+    show_interactive_screen "Source branch"
+    printf 'Loading branches from GitHub...\n'
     mapfile -t branches < <(fetch_github_branch_names || true)
+    show_interactive_screen "Source branch"
 
     if ((${#branches[@]} == 0)); then
         printf '\nCould not retrieve the branch list from GitHub.\n'
@@ -685,21 +712,11 @@ select_github_branch() {
 
     printf '\nAvailable GitHub branches:\n'
     for index in "${!branches[@]}"; do
-        if [[ "${branches[index]}" == little-os-test ]]; then
-            default_index=$((index + 1))
-            printf '  %2d) %-36s  [recommended Lite test]\n' "$((index + 1))" "${branches[index]}"
-        else
-            printf '  %2d) %s\n' "$((index + 1))" "${branches[index]}"
-        fi
+        printf '  %2d) %s\n' "$((index + 1))" "${branches[index]}"
     done
 
     while true; do
-        if [[ -n "$default_index" ]]; then
-            read -r -p "Select branch number [$default_index]: " choice
-            [[ -n "$choice" ]] || choice="$default_index"
-        else
-            read -r -p 'Select branch number: ' choice
-        fi
+        read -r -p 'Select branch number: ' choice
 
         if [[ "$choice" =~ ^[0-9]+$ ]] && \
            ((choice >= 1 && choice <= ${#branches[@]})); then
@@ -714,7 +731,8 @@ select_install_source() {
     local local_checkout="$1"
     local choice=""
 
-    printf '\nChoose what V-Link source to install:\n'
+    show_interactive_screen "Installation source"
+    printf 'Choose what V-Link source to install:\n'
     printf '  1) GitHub branch             [recommended for development / testing]\n'
     if [[ -n "$local_checkout" ]]; then
         printf '  2) This local checkout       [%s]\n' "$local_checkout"
@@ -743,7 +761,8 @@ select_install_source() {
 select_hardware_mode() {
     local choice=""
 
-    printf '\nWill this Raspberry Pi use the V-Link vehicle hardware/HAT?\n'
+    show_interactive_screen "Hardware"
+    printf 'Will this Raspberry Pi use the V-Link vehicle hardware/HAT?\n'
     printf '  1) Yes - configure CAN, UART, GPIO, SPI/I2C and device-tree overlays\n'
     printf '  2) No  - UI/CarPlay/media test only; do not touch vehicle hardware setup\n'
 
@@ -767,7 +786,8 @@ show_install_plan() {
         source_description="No supported Lite source selected"
     fi
 
-    printf '\n============================================================\n'
+    show_interactive_screen "Confirmation"
+    printf '============================================================\n'
     printf 'Installation plan\n'
     printf '============================================================\n'
     printf 'Source:   %s\n' "$source_description"

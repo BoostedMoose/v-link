@@ -172,17 +172,17 @@ cat >"$UNIT" <<EOF
 Description=V-Link interactive first-boot installer
 After=systemd-user-sessions.service userconfig.service NetworkManager.service
 Wants=NetworkManager.service
-Conflicts=getty@tty1.service display-manager.service lightdm.service
+Conflicts=getty@tty8.service display-manager.service lightdm.service
 
 [Service]
 Type=oneshot
 ExecStartPre=-/bin/systemctl stop lightdm.service
-ExecStartPre=-/usr/bin/chvt 1
+ExecStartPre=-/usr/bin/chvt 8
 ExecStart=$INSTALL_HELPER
 StandardInput=tty-force
 StandardOutput=tty
 StandardError=tty
-TTYPath=/dev/tty1
+TTYPath=/dev/tty8
 TTYReset=yes
 TTYVHangup=yes
 TTYVTDisallocate=no
