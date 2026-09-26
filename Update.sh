@@ -4,6 +4,12 @@ set -eu
 
 APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+if [ -f "$APP_DIR/.v-link-lite-runtime" ]; then
+    echo "In-app and standalone updates are temporarily disabled on V-Link Lite while transactional platform migration is being completed." >&2
+    echo "Use Install-Lite.sh to upgrade this installation." >&2
+    exit 1
+fi
+
 if [ ! -f "$APP_DIR/updater/releases.py" ]; then
     echo "V-Link updater files are missing. Run Update.sh from an installed V-Link directory containing updater/." >&2
     exit 1

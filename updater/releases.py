@@ -21,8 +21,17 @@ REPOSITORY = "BoostedMoose/v-link"
 API = f"https://api.github.com/repos/{REPOSITORY}"
 ASSET_NAME = "V-Link.zip"
 MANIFEST = ".vlink-release.json"
-MANAGED = ("frontend", "backend", "V-Link.py", "requirements.txt", "Patch.sh")
-REQUIRED = ("frontend/dist/index.html", "backend/version.py", "V-Link.py", "requirements.txt")
+PAYLOAD_SCHEMA = 2
+MANAGED = ("V-Link.py", "backend", "frontend", "updater", "lite", "resources",
+           "requirements.txt", "Update.sh", "Patch.sh", "Check-Lite.sh", MANIFEST)
+CORE_REQUIRED = ("frontend/dist/index.html", "backend/version.py", "V-Link.py",
+                 "requirements.txt")
+UPDATER_REQUIRED = ("updater/__init__.py", "updater/releases.py", "updater/keepalive.py",
+                    "Update.sh")
+LITE_REQUIRED = ("lite/Install-Lite.sh", "lite/Check-Lite.sh", "resources/dtoverlays",
+                 "Check-Lite.sh")
+MODERN_REQUIRED = (*CORE_REQUIRED, *UPDATER_REQUIRED, *LITE_REQUIRED, MANIFEST)
+LEGACY_MANAGED = ("V-Link.py", "backend", "frontend", "requirements.txt", "Patch.sh", MANIFEST)
 MAX_PAGES = 5
 MAX_DOWNLOAD = 500 * 1024 * 1024
 MAX_UNPACKED = 1024 * 1024 * 1024
@@ -156,27 +165,109 @@ def _extract(archive, stage):
             members = bundle.infolist()
             if sum(member.file_size for member in members) > MAX_UNPACKED:
                 raise UpdateError("Release archive is too large when extracted")
-            names = set()
             for member in members:
                 path = Path(member.filename)
                 if (path.is_absolute() or ".." in path.parts or not path.parts
                         or (member.external_attr >> 16) & 0o170000 == 0o120000):
                     raise UpdateError("Release archive contains an unsafe path")
-                names.add(member.filename)
-            if not all(name in names for name in REQUIRED):
-                raise UpdateError("Release archive is missing required app files")
             bundle.extractall(stage)
     except (zipfile.BadZipFile, OSError) as error:
         raise UpdateError(f"Invalid release archive: {error}") from error
+    manifest = _validate_payload(stage)
+    _normalize_modes(stage)
+    return manifest
+
+
+def _normalize_modes(stage):
+    """Set only the executable modes required by the staged application."""
+    try:
+        for name in ("V-Link.py", "Update.sh", "Check-Lite.sh"):
+            path = stage / name
+            if path.is_file():
+                path.chmod(0o755)
+    except OSError as error:
+        raise UpdateError(f"Could not set release script permissions: {error}") from error
+
+
+def _missing_paths(stage, required):
+    missing = []
+    for name in required:
+        path = stage / name
+        if name == "resources/dtoverlays":
+            exists = path.is_dir()
+        else:
+            exists = path.is_file()
+        if not exists:
+            missing.append(name)
+    return missing
+
+
+def _validate_payload(stage):
+    """Validate and classify an extracted release before it changes the app."""
+    missing_core = _missing_paths(stage, CORE_REQUIRED)
+    if missing_core:
+        raise UpdateError(
+            f"Release archive is missing required app files: {', '.join(missing_core)}")
+
+    manifest = {}
+    manifest_path = stage / MANIFEST
+    if manifest_path.exists():
+        if not manifest_path.is_file():
+            raise UpdateError("Release archive contains an invalid commit manifest")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise UpdateError("Release archive contains an invalid commit manifest") from error
+        if not isinstance(manifest, dict):
+            raise UpdateError("Release archive contains an invalid commit manifest")
+
+    schema = manifest.get("payload_schema")
+    if schema is not None and (
+            not isinstance(schema, int) or isinstance(schema, bool)
+            or schema != PAYLOAD_SCHEMA):
+        raise UpdateError(f"Unsupported release payload schema: {schema!r}")
+
+    has_updater = (stage / "updater").exists()
+    has_update_script = (stage / "Update.sh").exists()
+    if has_updater != has_update_script:
+        raise UpdateError("Release archive contains an incomplete updater payload")
+    if has_updater:
+        missing_updater = _missing_paths(stage, UPDATER_REQUIRED)
+        if missing_updater:
+            raise UpdateError(
+                f"Release archive contains an incomplete updater payload: {', '.join(missing_updater)}")
+
+    has_lite_payload = (stage / "lite").exists() or (stage / "Check-Lite.sh").exists()
+    if has_lite_payload:
+        missing_lite = _missing_paths(stage, LITE_REQUIRED)
+        if missing_lite:
+            raise UpdateError(
+                f"Release archive contains an incomplete Lite payload: {', '.join(missing_lite)}")
+
+    if schema == PAYLOAD_SCHEMA:
+        missing_modern = _missing_paths(stage, MODERN_REQUIRED)
+        if missing_modern:
+            raise UpdateError(
+                f"Modern release archive is incomplete: {', '.join(missing_modern)}")
+    return manifest
+
+
+def _managed_paths(stage, metadata):
+    if metadata.get("payload_schema") == PAYLOAD_SCHEMA:
+        return list(MANAGED)
+    paths = list(LEGACY_MANAGED)
+    if (stage / "updater").is_dir() and (stage / "Update.sh").is_file():
+        paths.extend(("updater", "Update.sh"))
+    if (stage / "lite").is_dir() and (stage / "Check-Lite.sh").is_file():
+        paths.extend(("lite", "resources", "Check-Lite.sh"))
+    return paths
 
 
 def _replace(stage, app_dir, metadata):
     """Swap managed paths and restore the previous app if a swap fails."""
     app_dir = Path(app_dir)
     backup = Path(tempfile.mkdtemp(prefix=".vlink-backup-", dir=app_dir))
-    paths = [*MANAGED, MANIFEST]
-    if (stage / "updater" / "releases.py").is_file() and (stage / "Update.sh").is_file():
-        paths.extend(("updater", "Update.sh"))
+    paths = _managed_paths(stage, metadata)
     (stage / MANIFEST).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     moved_old = []
     moved_new = []
@@ -241,15 +332,16 @@ def _install_locked(release_id, app_dir):
         print("Downloading release archive...", flush=True)
         _download(asset["browser_download_url"], archive, asset.get("digest"))
         print("Checking release archive...", flush=True)
-        _extract(archive, stage)
-        packaged_manifest = stage / MANIFEST
-        if packaged_manifest.is_file():
+        packaged_manifest = _extract(archive, stage)
+        if packaged_manifest:
             try:
-                packaged_commit = json.loads(packaged_manifest.read_text(encoding="utf-8"))["commit"]
-            except (OSError, ValueError, KeyError) as error:
+                packaged_commit = packaged_manifest["commit"]
+            except KeyError as error:
                 raise UpdateError("Release archive contains an invalid commit manifest") from error
             if packaged_commit != sha:
                 raise UpdateError("Release archive was built from a different commit than its tag")
+            if packaged_manifest.get("payload_schema") == PAYLOAD_SCHEMA:
+                metadata["payload_schema"] = PAYLOAD_SCHEMA
         python = app_dir / "venv" / "bin" / "python"
         if python.is_file():
             print("Installing Python requirements...", flush=True)

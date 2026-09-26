@@ -18,7 +18,8 @@ CHECK = ROOT / "lite/Check-Lite.sh"
 TERMINAL_RC = ROOT / "lite/runtime/V-Link-Lite-Terminal.bashrc"
 
 
-def prepare(boot, cmdline, firstrun=None, *, script=PREPARE, extra_env=None):
+def prepare(boot, cmdline, firstrun=None, *, script=PREPARE, extra_env=None,
+            args=None):
     (boot / "cmdline.txt").write_bytes(cmdline)
     (boot / "config.txt").write_text("[all]\n")
     if firstrun is not None:
@@ -26,7 +27,7 @@ def prepare(boot, cmdline, firstrun=None, *, script=PREPARE, extra_env=None):
     env = {**os.environ, "V_LINK_BOOT_VOLUME": str(boot)}
     if extra_env:
         env.update(extra_env)
-    return subprocess.run(["bash", str(script)], input="\n", text=True,
+    return subprocess.run(["bash", str(script), *(args or ())], input="\n", text=True,
                           capture_output=True, env=env, timeout=30)
 
 
@@ -164,11 +165,56 @@ def test_prepare_remote_downloads_are_pinned_to_one_resolved_sha():
             })
         assert result.returncode == 0, result.stderr
         urls = curl_log.read_text().splitlines()
-        assert urls[0].endswith("/commits/little-os-test")
+        assert urls[0].endswith("/commits/Lite-os-for-pr")
         assert len(urls) == 3
         assert all(f"/{sha}/" in url for url in urls[1:])
         manifest = (boot / "v-link-firstboot.conf").read_text()
-        assert f"SOURCE=GitHub branch little-os-test @ {sha}" in manifest
+        assert f"SOURCE=GitHub ref PabloMartin97/v-link Lite-os-for-pr @ {sha}" in manifest
+        assert "REPOSITORY=PabloMartin97/v-link" in manifest
+        assert "SOURCE_REF=Lite-os-for-pr" in manifest
+
+
+def test_prepare_explicit_official_repo_and_ref_are_pinned_and_recorded():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        helper_dir = root / "helper"
+        helper_dir.mkdir()
+        remote_prepare = helper_dir / PREPARE.name
+        shutil.copy2(PREPARE, remote_prepare)
+        sha = "b2" * 20
+        curl_log = root / "curl.log"
+        fake_curl = make_fake_curl(root, sha)
+        boot = root / "boot"
+        boot.mkdir()
+        result = prepare(
+            boot, b"rootwait console=tty1\n", script=remote_prepare,
+            args=("--repo", "BoostedMoose/v-link", "--ref", "dev"),
+            extra_env={
+                "V_LINK_CURL": str(fake_curl),
+                "V_LINK_CURL_LOG": str(curl_log),
+                "V_LINK_REMOTE_INSTALLER": str(INSTALL),
+                "V_LINK_REMOTE_BOOTSTRAP": str(FIRSTBOOT),
+            })
+        assert result.returncode == 0, result.stderr
+        urls = curl_log.read_text().splitlines()
+        assert urls[0].endswith("/repos/BoostedMoose/v-link/commits/dev")
+        assert all(f"/{sha}/" in url for url in urls[1:])
+        manifest = (boot / "v-link-firstboot.conf").read_text()
+        assert "REPOSITORY=BoostedMoose/v-link" in manifest
+        assert "SOURCE_REF=dev" in manifest
+
+
+def test_prepare_rejects_invalid_repository_before_changing_card():
+    with tempfile.TemporaryDirectory() as directory:
+        boot = Path(directory)
+        original = b"rootwait console=tty1\n"
+        result = prepare(
+            boot, original,
+            args=("--repo", "https://github.com/foo/bar", "--ref", "dev"))
+        assert result.returncode != 0
+        assert "OWNER/REPO" in result.stderr
+        assert (boot / "cmdline.txt").read_bytes() == original
+        assert not (boot / "v-link-firstboot.conf").exists()
 
 
 def test_prepare_remote_rejects_invalid_resolved_sha_before_downloads():
@@ -250,7 +296,8 @@ def test_prepare_failed_manifest_rename_leaves_complete_assets_and_old_manifest(
         assert not list(boot.glob(".v-link-prep.*"))
 
 
-def stage_firstboot(boot, system, valid=True, direct=False):
+def stage_firstboot(boot, system, valid=True, direct=False, *,
+                    repository="BoostedMoose/v-link", source_ref="dev"):
     boot.mkdir()
     system.mkdir()
     shutil.copy2(FIRSTBOOT, boot / FIRSTBOOT.name)
@@ -266,7 +313,8 @@ def stage_firstboot(boot, system, valid=True, direct=False):
     if not valid:
         installer_hash = "0" * 64
     (boot / "v-link-firstboot.conf").write_text(
-        f"SOURCE=test\nINSTALLER_SHA256={installer_hash}\nBOOTSTRAP_SHA256={bootstrap_hash}\n")
+        f"SOURCE=test\nREPOSITORY={repository}\nSOURCE_REF={source_ref}\n"
+        f"INSTALLER_SHA256={installer_hash}\nBOOTSTRAP_SHA256={bootstrap_hash}\n")
     bin_dir = boot / "bin"
     bin_dir.mkdir()
     (bin_dir / "systemctl").write_text("#!/bin/sh\nexit 0\n")
@@ -296,8 +344,14 @@ def test_firstboot_rejects_mixed_bootstrap_version():
         assert result.returncode != 0
         manifest = boot / "v-link-firstboot.conf"
         lines = manifest.read_text().splitlines()
-        lines[1] = "INSTALLER_SHA256=" + hashlib.sha256((boot / "Install-Lite.sh").read_bytes()).hexdigest()
-        lines[2] = "BOOTSTRAP_SHA256=" + "0" * 64
+        lines = [
+            "INSTALLER_SHA256=" + hashlib.sha256(
+                (boot / "Install-Lite.sh").read_bytes()).hexdigest()
+            if line.startswith("INSTALLER_SHA256=") else
+            "BOOTSTRAP_SHA256=" + "0" * 64
+            if line.startswith("BOOTSTRAP_SHA256=") else line
+            for line in lines
+        ]
         manifest.write_text("\n".join(lines) + "\n")
         system = root / "system"
         second = subprocess.run(["bash", str(boot / FIRSTBOOT.name)], text=True,
@@ -315,10 +369,23 @@ def test_firstboot_valid_hash_stages_installer_and_user_selection():
         result = stage_firstboot(root / "boot", root / "system")
         assert result.returncode == 0, (root / "boot/v-link-firstboot.log").read_text()
         assert (root / "system/usr/local/libexec/v-link-install-lite").exists()
+        install_helper = (root / "system/usr/local/sbin/v-link-firstboot-installer").read_text()
+        assert '--repo "BoostedMoose/v-link" --ref "dev"' in install_helper
         selector = (root / "system/usr/local/sbin/v-link-firstboot-user").read_text()
         assert "UID_MIN" in selector and "UID_MAX" in selector
         assert "getent passwd 1000" not in selector
         assert "Multiple eligible users" in selector
+
+
+def test_firstboot_propagates_development_repo_and_ref_to_installer():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        result = stage_firstboot(
+            root / "boot", root / "system",
+            repository="PabloMartin97/v-link", source_ref="Lite-os-for-pr")
+        assert result.returncode == 0, (root / "boot/v-link-firstboot.log").read_text()
+        helper = (root / "system/usr/local/sbin/v-link-firstboot-installer").read_text()
+        assert '--repo "PabloMartin97/v-link" --ref "Lite-os-for-pr"' in helper
 
 
 def test_firstboot_installer_uses_tty8_and_returns_to_tty1():
@@ -377,6 +444,332 @@ def test_lite_installer_cache_and_cleanup_remain_scoped():
     assert "/usr/local/sbin/v-link-firstboot-user" in source
 
 
+def make_minimal_lite_source(root):
+    required_files = (
+        "V-Link.py", "requirements.txt", "Update.sh", "backend/server.py",
+        "updater/__init__.py", "updater/releases.py", "updater/keepalive.py",
+        "resources/dtoverlays/v-link.dtbo",
+        "resources/dtoverlays/mcp2515-can1.dtbo",
+        "resources/dtoverlays/mcp2515-can2.dtbo", "lite/Check-Lite.sh",
+        "lite/runtime/V-Link-Lite-Boot.sh",
+        "lite/runtime/V-Link-Lite-Overlay.py",
+        "lite/splash/V-Link-Lite-Prepare-Splash.py",
+        "lite/runtime/V-Link-Lite-Session.sh",
+        "lite/runtime/V-Link-Lite-Handoff.js",
+        "lite/runtime/V-Link-Lite-Terminal.bashrc",
+        "lite/V-Link-Lite-Setup.py", "lite/runtime/V-Link-Lite-Cursor.py",
+        "lite/lib/v_link_lite_support.py", "lite/lib/v_link_lite_audio.py",
+        "lite/lib/v_link_lite_display.py", "lite/splash/Render-Lite-Splash.py",
+        "frontend/public/assets/svg/logos/moose.svg",
+        "frontend/public/assets/svg/logos/vlink.svg", "frontend/dist/index.html",
+    )
+    setup_modules = (
+        "__init__.py", "ui.py", "navigation.py", "network.py", "audio.py",
+        "display.py", "storage.py", "vlink.py", "diagnostics.py", "terminal.py",
+    )
+    for relative in required_files + tuple(
+            f"lite/setup/{module}" for module in setup_modules):
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("test\n")
+
+
+def validate_source_function():
+    source = INSTALL.read_text()
+    body = source.split("validate_source() {", 1)[1].split(
+        "\nvalidate_v_link_imports() {", 1)[0]
+    return "validate_source() {" + body
+
+
+def test_lite_source_validation_requires_complete_updater_package():
+    function = validate_source_function()
+    script = (
+        "set -Eeuo pipefail\n"
+        "die() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+        "validate_lite_session_launcher() { return 0; }\n"
+        + function + "\nvalidate_source \"$1\"\n")
+    updater_files = (
+        "updater/__init__.py", "updater/releases.py", "updater/keepalive.py")
+
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory) / "source"
+        make_minimal_lite_source(source)
+        valid = subprocess.run(
+            ["bash", "-c", script, "bash", str(source)], text=True,
+            capture_output=True)
+        assert valid.returncode == 0, valid.stderr
+
+        for relative in updater_files:
+            missing_source = Path(directory) / relative.replace("/", "-")
+            shutil.copytree(source, missing_source)
+            (missing_source / relative).unlink()
+            result = subprocess.run(
+                ["bash", "-c", script, "bash", str(missing_source)], text=True,
+                capture_output=True)
+            assert result.returncode != 0
+            assert f"source is incomplete: missing {relative}" in result.stderr
+
+
+def app_transaction_functions():
+    source = INSTALL.read_text()
+    functions = source.split("restore_app_path() {", 1)[1].split(
+        "\non_error() {", 1)[0]
+    return "restore_app_path() {" + functions
+
+
+def test_lite_runtime_installs_updater_as_a_transactional_directory():
+    install = INSTALL.read_text()
+    runtime = install.split('log "Installing V-Link application files"', 1)[1].split(
+        'log "Creating the Python virtual environment"', 1)[0]
+    assert 'replace_app_directory "$SOURCE_DIR/updater" "$APP_DIR/updater"' in runtime
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        source = root / "source/updater"
+        destination = root / "app/updater"
+        source.mkdir(parents=True)
+        destination.mkdir(parents=True)
+        for filename in ("__init__.py", "releases.py", "keepalive.py"):
+            (source / filename).write_text(f"new {filename}\n")
+        (destination / "releases.py").write_text("old updater\n")
+        script = (
+            "set -Eeuo pipefail\n" + app_transaction_functions() + "\n"
+            "APP_CHANGED_PATHS=()\nAPP_TRANSACTION=true\n"
+            'replace_app_directory "$1" "$2"\ncommit_app_transaction\n')
+        result = subprocess.run(
+            ["bash", "-c", script, "bash", str(source), str(destination)],
+            text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        for filename in ("__init__.py", "releases.py", "keepalive.py"):
+            assert (destination / filename).read_text() == f"new {filename}\n"
+        assert not Path(str(destination) + ".v-link-old").exists()
+
+
+def recovery_helper_source():
+    source = INSTALL.read_text()
+    marker = 'cat >"$TARGET_HOME/.local/libexec/v-link-recover-update" <<\'EOF\'\n'
+    return source.split(marker, 1)[1].split("\nEOF\n", 1)[0] + "\n"
+
+
+def test_interrupted_update_recovery_restores_updater_directory():
+    helper_source = recovery_helper_source()
+    assert "V-Link.py backend frontend updater resources" in helper_source
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        app = root / "v-link"
+        transaction = root / ".v-link-update.test"
+        backup = transaction / "backup/updater"
+        (app / "updater").mkdir(parents=True)
+        backup.mkdir(parents=True)
+        (app / "updater/releases.py").write_text("incomplete update\n")
+        (backup / "releases.py").write_text("known good\n")
+        (root / ".v-link-update-active").write_text(
+            f"{transaction}\n{app}\n")
+        helper = root / "recover"
+        helper.write_text(helper_source)
+        helper.chmod(0o755)
+
+        result = subprocess.run(
+            ["bash", str(helper), "--lock-held", str(app)], text=True,
+            capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert (app / "updater/releases.py").read_text() == "known good\n"
+        assert not (root / ".v-link-update-active").exists()
+        assert not transaction.exists()
+
+
+def test_lite_health_check_requires_complete_updater_package():
+    check = CHECK.read_text()
+    application = check.split("printf '\\nApplication\\n'", 1)[1]
+    for relative in ("__init__.py", "releases.py", "keepalive.py"):
+        assert f'"$APP_DIR/updater/{relative}"' in application
+
+
+def test_lite_health_check_requires_critical_runtime_scripts_to_be_executable():
+    check = CHECK.read_text()
+    executable_check = "for executable_path in" + check.split(
+        "for executable_path in", 1)[1].split("\ndone", 1)[0] + "\ndone"
+    for relative in ("V-Link.py", "Update.sh", "Check-Lite.sh"):
+        assert f'"$APP_DIR/{relative}"' in executable_check
+    assert '[[ -x "$executable_path" ]]' in executable_check
+    assert 'fail "not executable: $executable_path"' in executable_check
+
+    with tempfile.TemporaryDirectory() as directory:
+        app = Path(directory)
+        for relative in ("V-Link.py", "Update.sh", "Check-Lite.sh"):
+            target = app / relative
+            target.touch()
+            target.chmod(0o755)
+        (app / "Update.sh").chmod(0o644)
+        script = (
+            "set -Eeuo pipefail\nfailures=0\n"
+            "pass() { :; }\nfail() { failures=$((failures + 1)); }\n" +
+            executable_check + "\nprintf '%s\\n' \"$failures\"\n")
+        result = subprocess.run(
+            ["bash", "-c", script, "bash"], text=True, capture_output=True,
+            env={**os.environ, "APP_DIR": str(app)})
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "1"
+
+
+def test_lite_installer_keeps_full_v_link_import_validation():
+    installer = INSTALL.read_text()
+    import_check = installer.split("validate_v_link_imports() {", 1)[1].split(
+        "\nfrontend_source_hash() {", 1)[0]
+    assert 'cd "$1"' in import_check
+    assert 'exec "$2" "$1/V-Link.py" --help' in import_check
+    assert installer.count("validate_v_link_imports") >= 3
+
+
+def installer_function(name, next_name):
+    source = INSTALL.read_text()
+    body = source.split(f"{name}() {{", 1)[1].split(
+        f"\n{next_name}() {{", 1)[0]
+    return f"{name}() {{" + body
+
+
+def test_repository_validation_accepts_github_names_and_rejects_urls_and_paths():
+    function = installer_function("validate_repository", "node_is_compatible")
+    valid = ("BoostedMoose/v-link", "PabloMartin97/v-link", "owner/repo.js")
+    invalid = (
+        "invalid", "owner/", "https://github.com/foo/bar", "../../foo",
+        "/foo/bar", "foo/bar/baz", "-owner/repo", "owner-/repo", "owner/..",
+        "owner/repo name", "owner//repo", "",
+    )
+    for repository in valid:
+        result = subprocess.run(
+            ["bash", "-c", function + '\nvalidate_repository "$1"',
+             "bash", repository], capture_output=True)
+        assert result.returncode == 0, repository
+    for repository in invalid:
+        result = subprocess.run(
+            ["bash", "-c", function + '\nvalidate_repository "$1"',
+             "bash", repository], capture_output=True)
+        assert result.returncode != 0, repository
+
+
+def run_repository_selector(user_input):
+    functions = (
+        installer_function("validate_repository", "node_is_compatible") + "\n" +
+        installer_function("select_repository", "fetch_github_branch_names"))
+    script = (
+        "set -Eeuo pipefail\n"
+        "show_interactive_screen() { :; }\n"
+        "DEFAULT_REPOSITORY=BoostedMoose/v-link\n"
+        "REPOSITORY=$DEFAULT_REPOSITORY\n" + functions + "\n"
+        "select_repository\nprintf '%s\\n' \"$REPOSITORY\"\n")
+    return subprocess.run(
+        ["bash", "-c", script], input=user_input, text=True,
+        capture_output=True)
+
+
+def test_repository_selector_supports_official_fork_and_validated_custom_repo():
+    assert run_repository_selector("\n").stdout.splitlines()[-1] == "BoostedMoose/v-link"
+    assert run_repository_selector("2\n").stdout.splitlines()[-1] == "PabloMartin97/v-link"
+    custom = run_repository_selector("3\ninvalid\n3\nexample/custom-repo\n")
+    assert custom.returncode == 0, custom.stderr
+    assert "Invalid GitHub repository" in custom.stdout
+    assert custom.stdout.splitlines()[-1] == "example/custom-repo"
+
+
+def test_repository_option_and_all_v_link_github_operations_use_selected_repo():
+    source = INSTALL.read_text()
+    parser = source.split("while (($#)); do", 1)[1].split(
+        'show_phase 1 7 "Setup"', 1)[0]
+    assert 'readonly DEFAULT_REPOSITORY="BoostedMoose/v-link"' in source
+    assert 'REPOSITORY="$DEFAULT_REPOSITORY"' in source
+    assert "--repo)" in parser
+    assert 'REPOSITORY="$2"' in parser
+    assert "REPOSITORY_EXPLICIT=true" in parser
+    assert 'validate_repository "$REPOSITORY"' in source
+    assert "https://api.github.com/repos/$REPOSITORY/branches?per_page=100" in source
+    assert "https://api.github.com/repos/$REPOSITORY/commits/$ENCODED_REF" in source
+    assert source.count(
+        "https://api.github.com/repos/$REPOSITORY/releases/latest") == 2
+    assert '"https://github.com/$REPOSITORY.git"' in source
+    for fixed_url in (
+            "api.github.com/repos/PabloMartin97/v-link",
+            "api.github.com/repos/BoostedMoose/v-link",
+            "github.com/PabloMartin97/v-link.git",
+            "github.com/BoostedMoose/v-link.git"):
+        assert fixed_url not in source
+
+
+def run_source_selector(user_input, local_checkout=""):
+    function = installer_function("select_install_source", "select_hardware_mode")
+    script = (
+        "set -Eeuo pipefail\n"
+        "show_interactive_screen() { :; }\n"
+        "select_github_branch() { SOURCE_REF=chosen-ref; }\n"
+        "SOURCE_DIR=before\nSOURCE_REF=before\n" + function + "\n"
+        'select_install_source "$1"\n'
+        "printf 'dir=%s\\nref=%s\\n' \"$SOURCE_DIR\" \"$SOURCE_REF\"\n")
+    return subprocess.run(
+        ["bash", "-c", script, "bash", local_checkout], input=user_input,
+        text=True, capture_output=True)
+
+
+def test_source_selector_defaults_to_release_and_keeps_branch_and_local_choices():
+    release = run_source_selector("\n")
+    assert release.returncode == 0, release.stderr
+    assert release.stdout.endswith("dir=\nref=\n")
+
+    branch = run_source_selector("2\n")
+    assert branch.returncode == 0, branch.stderr
+    assert branch.stdout.endswith("dir=\nref=chosen-ref\n")
+
+    local = run_source_selector("3\n", "/checkout")
+    assert local.returncode == 0, local.stderr
+    assert local.stdout.endswith("dir=/checkout\nref=\n")
+
+
+def test_release_is_reachable_without_ref_and_local_source_stays_explicit():
+    source = INSTALL.read_text()
+    decisions = source.split('if [[ "$ASSUME_YES" != true ]]; then', 1)[1].split(
+        '[[ -z "$LIN_PORT" || "$CONFIGURE_HARDWARE" == true ]]', 1)[0]
+    release_download = source.split('show_phase 3 7 "V-Link source"', 1)[1].split(
+        'SOURCE_DIR="$(realpath -e "$SOURCE_DIR")"', 1)[0]
+    assert "current published release lacks the Lite installation payload" not in source
+    assert 'SOURCE_DIR="$LOCAL_SOURCE_CANDIDATE"' not in decisions
+    assert 'elif [[ -z "$SOURCE_DIR" ]]; then' in release_download
+    assert "https://api.github.com/repos/$REPOSITORY/releases/latest" in release_download
+    assert 'if [[ -n "$SOURCE_DIR" ]]; then' in source
+    assert 'SOURCE_DIR="$(realpath -e "$SOURCE_DIR")"' in source
+
+
+def test_interactive_flow_keeps_repository_source_and_hardware_independent():
+    source = INSTALL.read_text()
+    interactive = source.split('if [[ "$ASSUME_YES" != true ]]; then', 1)[1].split(
+        '[[ -z "$LIN_PORT" || "$CONFIGURE_HARDWARE" == true ]]', 1)[0]
+    parser = source.split("while (($#)); do", 1)[1].split(
+        'show_phase 1 7 "Setup"', 1)[0]
+    hardware = parser.split("--hardware)", 1)[1].split("--no-reboot)", 1)[0]
+
+    assert interactive.index("select_repository") < interactive.index(
+        "select_install_source") < interactive.index("select_hardware_mode")
+    assert '[[ "$REPOSITORY_EXPLICIT" != true ]]' in interactive
+    assert '[[ "$SOURCE_CHOICE_EXPLICIT" != true ]]' in interactive
+    assert '[[ "$HARDWARE_CHOICE_EXPLICIT" != true ]]' in interactive
+    assert "REPOSITORY" not in hardware
+    assert "SOURCE_REF" not in hardware
+    assert "SOURCE_DIR" not in hardware
+    assert "CONFIGURE_HARDWARE=true" in hardware
+    assert "CONFIGURE_HARDWARE=false" in hardware
+
+
+def test_usage_and_install_plan_describe_repository_and_release_defaults():
+    source = INSTALL.read_text()
+    usage = source.split("usage() {", 1)[1].split("\nlog() {", 1)[0]
+    plan = source.split("show_install_plan() {", 1)[1].split(
+        "\nvalidate_source() {", 1)[0]
+    assert "--repo OWNER/REPO" in usage
+    assert "default: BoostedMoose/v-link" in usage
+    assert "PabloMartin97/v-link --ref Lite-os-for-pr" in usage
+    assert "Latest stable release" in plan
+    assert "Repository: %s" in plan
+
+
 def test_branch_selector_has_no_recommended_or_automatic_lite_choice():
     source = INSTALL.read_text()
     selector = source.split("select_github_branch() {", 1)[1].split(
@@ -393,7 +786,7 @@ def test_interactive_steps_clear_and_network_blocks_source_selection():
     wait = source.split("wait_for_internet() {", 1)[1].split(
         "\ncleanup_first_boot_stage() {", 1)[0]
     main = source.split('if [[ "$ASSUME_YES" != true ]]; then', 1)[1].split(
-        'elif [[ "$SOURCE_CHOICE_EXPLICIT"', 1)[0]
+        '[[ -z "$LIN_PORT" || "$CONFIGURE_HARDWARE" == true ]]', 1)[0]
 
     assert "-t 0 && -w /dev/tty" in clear
     assert 'output=/dev/tty' in clear
@@ -401,8 +794,9 @@ def test_interactive_steps_clear_and_network_blocks_source_selection():
     assert "Waiting for network..." in wait
     assert "internet_available" in wait
     assert "read -r -t 3" in wait
+    assert main.index("wait_for_internet") < main.index("select_repository")
     assert main.index("wait_for_internet") < main.index("select_install_source")
-    for title in ("Installation source", "Source branch", "Hardware", "Confirmation"):
+    for title in ("Repository", "Installation source", "Source branch", "Hardware", "Confirmation"):
         assert f'show_interactive_screen "{title}"' in source
 
 

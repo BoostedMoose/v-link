@@ -19,7 +19,7 @@ The heart of this project is the open source **V-Link app**. It's running native
 
 ## Updating and downgrading
 
-In **Settings → System → Update**, choose **Stable** or **Prerelease**, then select a release. Prereleases are grouped by branch and show a seven-character commit hash. Older releases are available in the same list for downgrades. If GitHub is unavailable while browsing releases or starting an update, the picker offers Retry and the app keeps running. Once an update starts, the app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, and reboots. If the download or archive check then fails, the installed app files are kept; the app stays stopped so you can inspect the error in the updater terminal.
+On Desktop, **Settings → System → Update** can install or downgrade to published releases. Prereleases are grouped by branch and show a seven-character commit hash. If GitHub is unavailable while browsing releases or starting an update, the picker offers Retry and the app keeps running. Once an update starts, the app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, and reboots. If the download or archive check then fails, the installed app files are kept; the app stays stopped so you can inspect the error in the updater terminal.
 
 The standalone updater is also available on the Pi:
 
@@ -27,13 +27,13 @@ The standalone updater is also available on the Pi:
 sh ~/v-link/Update.sh
 ```
 
-It lists published releases with a `V-Link.zip` asset and prompts for a release number. This remains available after downgrading to a release that predates the in-app picker. On installations made before the updater was included in the ZIP, install a new release package once to get the standalone updater.
+It lists published releases with a `V-Link.zip` asset and prompts for a release number. This remains available after downgrading to a release that predates the in-app picker. On installations made before the updater was included in the ZIP, install a new release package once to get the standalone updater. Both update paths are temporarily blocked when `.v-link-lite-runtime` marks a Lite installation; use `Install-Lite.sh` to reinstall or upgrade Lite until transactional platform migration is implemented.
 
 ### Creating releases
 
 `frontend/package.json` is the source of the app version. The UI and Python app read it, and the release ZIP includes it. To set a version, run `npm version 3.2.0 --no-git-tag-version` from `frontend/`; this also updates `frontend/package-lock.json`. Use a prerelease version such as `3.2.0-beta.1` when appropriate. The root `package.json` is a separate Node package. The packager checks that the frontend package and lockfile versions match.
 
-Commit all source changes and run `./Package.sh` from the exact commit you will tag. Upload the four files in `dist/` as separate GitHub release assets: `Install.sh`, `Uninstall.sh`, `Update.sh`, and `V-Link.zip`. The packager refuses a dirty checkout. The ZIP contains the app and its updater; the installer and uninstaller are separate downloads. The standalone `Update.sh` asset is a launcher for an existing installation that also contains `updater/`. The installer currently installs the latest stable release by default, even if downloaded from a prerelease page. The package contains a commit manifest; the updater checks that its hash matches the release tag before installing. Mark a prerelease with GitHub's **Set as a pre-release** option. When creating its tag in GitHub, choose the source branch in **Target**. For an existing tag, put `V-Link-Branch: dev` (or another branch name, such as `factory-screen`) on its own line in the release notes; a tag like `dev/v3.2.0-beta.1` also identifies the branch. This keeps prereleases from different branches separate in the picker.
+Commit all source changes and run `./Package.sh` from the exact commit you will tag. Upload every generated file in `dist/`: `Install.sh`, `Install-Lite.sh`, `Uninstall.sh`, `Update.sh`, `V-Link.zip`, and `V-Link.zip.sha256`. The packager refuses a dirty checkout. The single `V-Link.zip` contains the Desktop application plus the versioned Lite payload; V-Link Lite is not a separate release and there is no `V-Link-Lite.zip`. The installers and standalone updater are separate launchers. The package contains a commit manifest and payload schema; the updater checks that its commit matches the release tag before installing. Mark a prerelease with GitHub's **Set as a pre-release** option. When creating its tag in GitHub, choose the source branch in **Target**. For an existing tag, put `V-Link-Branch: dev` (or another branch name, such as `factory-screen`) on its own line in the release notes; a tag like `dev/v3.2.0-beta.1` also identifies the branch. This keeps prereleases from different branches separate in the picker.
 
 Updates do not run `Patch.sh` automatically. A release that requires system configuration changes should include explicit migration instructions in its release notes.
 
@@ -73,29 +73,58 @@ The Lite installer adds a minimal Wayland session, Chromium kiosk, mouse/touch
 input, PipeWire audio and optional V-Link HAT support. It targets Raspberry Pi
 OS **Bookworm Lite** on Pi 3, 4 or 5.
 
-For the fastest installation, publish `Install-Lite.sh`, `V-Link.zip` and
-`V-Link.zip.sha256` as assets of a release in `PabloMartin97/v-link`, then run:
+The official non-interactive installation uses the latest stable release from
+`BoostedMoose/v-link`:
 
 ```sh
-curl -fLO https://github.com/PabloMartin97/v-link/releases/latest/download/Install-Lite.sh
+curl -fLO https://github.com/BoostedMoose/v-link/releases/latest/download/Install-Lite.sh
 chmod +x Install-Lite.sh
 sudo ./Install-Lite.sh --yes
 ```
 
-Until a release is published, the test branch can be installed directly after
-that branch has been pushed to GitHub:
+An official branch or tag can be selected explicitly:
 
 ```sh
-curl -fLO https://raw.githubusercontent.com/PabloMartin97/v-link/little-os-test/lite/Install-Lite.sh
-chmod +x Install-Lite.sh
-sudo ./Install-Lite.sh --ref little-os-test --yes
+sudo ./Install-Lite.sh --repo BoostedMoose/v-link --ref dev --yes
 ```
 
-The branch path builds the frontend on the Pi and is therefore slower. When the
-script is run inside a local checkout it detects it automatically, keeps the
-Git checkout intact and deploys the kiosk to `~/v-link-runtime`. Use
-`--no-hardware` for a UI-only kiosk, or `--no-reboot` to inspect the result
-before the first reboot. See every option with `./Install-Lite.sh --help`.
+For development, the same installer can use the fork directly:
+
+```sh
+sudo ./Install-Lite.sh \
+  --repo PabloMartin97/v-link \
+  --ref Lite-os-for-pr \
+  --yes
+```
+
+`--no-hardware` is independent of repository and source selection:
+
+```sh
+sudo ./Install-Lite.sh \
+  --repo PabloMartin97/v-link \
+  --ref Lite-os-for-pr \
+  --no-hardware \
+  --yes
+```
+
+Branch and tag installations build the frontend on the Pi and are therefore
+slower. An explicit `--source-dir` keeps a local Git checkout intact and deploys
+the kiosk to `~/v-link-runtime`. Use `--no-reboot` to inspect the result before
+the first reboot. See every option with `./Install-Lite.sh --help`.
+
+On macOS, `lite/Prepare-V-Link-SD.command` prepares an already-flashed card.
+Its terminal selector defaults to `PabloMartin97/v-link` at `Lite-os-for-pr`
+during development and also offers `BoostedMoose/v-link` at `dev`. The same
+choice can be supplied directly:
+
+```sh
+./lite/Prepare-V-Link-SD.command \
+  --repo BoostedMoose/v-link \
+  --ref dev
+```
+
+Prepare SD resolves the selected ref once, downloads its installer and
+bootstrap from that commit, and carries the same repository/ref into first boot.
 
 After reboot, validate the complete installation:
 

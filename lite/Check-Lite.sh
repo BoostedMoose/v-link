@@ -669,6 +669,9 @@ for required_path in \
     "$APP_DIR/Check-Lite.sh" \
     "$APP_DIR/Update.sh" \
     "$APP_DIR/backend/server.py" \
+    "$APP_DIR/updater/__init__.py" \
+    "$APP_DIR/updater/releases.py" \
+    "$APP_DIR/updater/keepalive.py" \
     "$APP_DIR/frontend/dist/index.html" \
     "$APP_DIR/.v-link-lite-runtime" \
     "$APP_DIR/venv/bin/python" \
@@ -679,6 +682,17 @@ for required_path in \
         pass "found $required_path"
     else
         fail "missing $required_path"
+    fi
+done
+for executable_path in \
+    "$APP_DIR/V-Link.py" \
+    "$APP_DIR/Update.sh" \
+    "$APP_DIR/Check-Lite.sh"; do
+    [[ -e "$executable_path" ]] || continue
+    if [[ -x "$executable_path" ]]; then
+        pass "executable: $executable_path"
+    else
+        fail "not executable: $executable_path"
     fi
 done
 if grep -qF '<!-- BEGIN V-LINK LITE SPLASH HANDOFF -->' "$APP_DIR/frontend/dist/index.html" 2>/dev/null && \

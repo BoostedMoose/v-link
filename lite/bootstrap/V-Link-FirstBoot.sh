@@ -5,7 +5,7 @@ set -Eeuo pipefail
 # once through systemd.run when Imager did not create a firstrun.sh. It only
 # stages the interactive installer for the next normal boot.
 
-readonly V_LINK_FIRST_BOOT_PROTOCOL=2
+readonly V_LINK_FIRST_BOOT_PROTOCOL=3
 SYSTEM_ROOT="${V_LINK_FIRST_BOOT_ROOT:-}"
 PROC_CMDLINE="${V_LINK_PROC_CMDLINE:-/proc/cmdline}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,15 +79,27 @@ fi
 INSTALLER_SHA256=""
 BOOTSTRAP_SHA256=""
 SOURCE_TAG=""
+SOURCE_REPOSITORY=""
+SOURCE_REF=""
 while IFS='=' read -r key value; do
     case "$key" in
         SOURCE) [[ -z "$SOURCE_TAG" && -n "$value" ]] || die "missing or duplicate SOURCE in first-boot manifest"; SOURCE_TAG="$value" ;;
+        REPOSITORY) [[ -z "$SOURCE_REPOSITORY" && -n "$value" ]] || die "missing or duplicate REPOSITORY in first-boot manifest"; SOURCE_REPOSITORY="$value" ;;
+        SOURCE_REF) [[ -z "$SOURCE_REF" && -n "$value" ]] || die "missing or duplicate SOURCE_REF in first-boot manifest"; SOURCE_REF="$value" ;;
         INSTALLER_SHA256) [[ -z "$INSTALLER_SHA256" ]] || die "duplicate installer hash"; INSTALLER_SHA256="$value" ;;
         BOOTSTRAP_SHA256) [[ -z "$BOOTSTRAP_SHA256" ]] || die "duplicate bootstrap hash"; BOOTSTRAP_SHA256="$value" ;;
         *) die "unexpected first-boot manifest field: $key" ;;
     esac
 done <"$MANIFEST"
 [[ -n "$SOURCE_TAG" ]] || die "missing SOURCE in first-boot manifest"
+[[ "$SOURCE_REPOSITORY" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9._-]+$ ]] || \
+    die "invalid REPOSITORY in first-boot manifest"
+[[ "$SOURCE_REPOSITORY" != */. && "$SOURCE_REPOSITORY" != */.. ]] || \
+    die "invalid REPOSITORY in first-boot manifest"
+[[ "$SOURCE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ && \
+   "$SOURCE_REF" != *//* && "$SOURCE_REF" != */ && \
+   "$SOURCE_REF" != */../* && "$SOURCE_REF" != ../* && "$SOURCE_REF" != */.. ]] || \
+    die "invalid SOURCE_REF in first-boot manifest"
 [[ "$INSTALLER_SHA256" =~ ^[[:xdigit:]]{64}$ && "$BOOTSTRAP_SHA256" =~ ^[[:xdigit:]]{64}$ ]] || \
     die "invalid SHA256 in first-boot manifest"
 INSTALLER_SHA256="$(printf '%s' "$INSTALLER_SHA256" | tr '[:upper:]' '[:lower:]')"
@@ -145,7 +157,8 @@ trap copy_log_to_boot_partition EXIT
 target_user="\$("$USER_HELPER")" || exit 1
 target_home="\$(getent passwd "\$target_user" | cut -d: -f6)"
 cd "\$target_home"
-"$INSTALLER_STAGED" --first-boot --user "\$target_user" 2>&1 | \
+"$INSTALLER_STAGED" --first-boot --user "\$target_user" \
+    --repo "$SOURCE_REPOSITORY" --ref "$SOURCE_REF" 2>&1 | \
     tee -a "$INSTALL_LOG"
 EOF
 chmod 0755 "$INSTALL_HELPER"

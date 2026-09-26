@@ -692,6 +692,7 @@ if __name__ == '__main__':
                         '--user',
                         '--collect',
                         f'--unit=v-link-update-{os.getpid()}',
+                        '/bin/sh',
                         script_path,
                         '--release-id',
                         str(shared_state.update_release_id),

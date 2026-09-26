@@ -54,15 +54,16 @@ staging and precedes the final health check; it is **not implemented here**.
 
 ## Integration with the common updater
 
-The common updater has now been merged into `BoostedMoose/v-link` `dev`. Before
-implementing Lite migration, synchronize `little-os-test` with the current
-upstream `dev`, review the updater and packager as merged, and extend their
-normal transaction. Do not replace them or create an independent Lite updater.
+The common updater and packager now carry the complete versioned Lite payload.
+Until deployed Lite infrastructure can migrate in the same transaction, both
+the in-app and standalone updater reject runtimes marked with
+`.v-link-lite-runtime`; reinstall through `Install-Lite.sh` instead. Future Lite
+migration must extend the normal transaction rather than create an independent
+Lite updater.
 
-The old Lite download path expects `V-Link.zip.sha256`. The updater/packager now
-present in `dev` uses the newer release digest/manifest mechanism instead.
-Future integration must adopt that common mechanism and review the full Lite
-payload described above; it must not preserve a parallel legacy checksum path.
+The Lite installer verifies `V-Link.zip.sha256`; the in-app updater also checks
+the release digest and commit manifest. Both consume the same `V-Link.zip`, not
+separate Desktop and Lite archives.
 
 The desired transaction is:
 

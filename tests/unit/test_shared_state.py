@@ -25,6 +25,29 @@ def test_lite_mode_uses_runtime_root_marker_once():
         assert state.liteMode is marker_present
 
 
+def test_only_lite_runtime_blocks_in_app_updates():
+    desktop = SharedState()
+    desktop.liteMode = False
+    assert desktop.update_block_reason() is None
+
+    lite = SharedState()
+    lite.liteMode = True
+    reason = lite.update_block_reason()
+    assert "temporarily disabled on V-Link Lite" in reason
+    assert "Install-Lite.sh" in reason
+
+
+def test_backend_checks_lite_block_before_release_lookup_or_update_event():
+    server = (Path(__file__).resolve().parents[2] / "backend/server.py").read_text()
+    update_handler = server.split("elif args == 'update':", 1)[1].split(
+        "elif args == 'ign':", 1)[0]
+    assert update_handler.index("update_block_reason") < update_handler.index("get_release")
+    assert update_handler.index("update_block_reason") < update_handler.index(
+        "update_event.set()")
+    assert "shared_state.update_release_id = release_id" in update_handler
+    assert "shared_state.update_event.set()" in update_handler
+
+
 def test_initial_thread_dict_has_all_keys():
     s = SharedState()
     expected = {'server', 'app', 'can', 'swc', 'adc', 'rti', 'ign', 'cam', 'vcan', 'pimost'}

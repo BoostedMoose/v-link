@@ -5,6 +5,14 @@ from threading import Lock
 import time
 from pathlib import Path
 
+
+LITE_UPDATE_DISABLED_MESSAGE = (
+    'In-app updates are temporarily disabled on V-Link Lite while transactional '
+    'platform migration is being completed. Use Install-Lite.sh to upgrade this '
+    'installation.'
+)
+
+
 class SharedState:
     def __init__(self):
         #Global Variables
@@ -85,6 +93,9 @@ class SharedState:
             "vcan":     None,
             "pimost":   None,
         }
+
+    def update_block_reason(self):
+        return LITE_UPDATE_DISABLED_MESSAGE if self.liteMode else None
 
     def update_car_data(self, key, value):
         with self.car_data_lock:

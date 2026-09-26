@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
 # V-Link installer for Raspberry Pi OS Lite (Bookworm)
-# https://github.com/PabloMartin97/v-link
+# https://github.com/BoostedMoose/v-link
 
 set -Eeuo pipefail
 
-readonly REPOSITORY="PabloMartin97/v-link"
+readonly DEFAULT_REPOSITORY="BoostedMoose/v-link"
 readonly APP_NAME="v-link"
 readonly CONFIG_BEGIN="# BEGIN V-LINK LITE"
 readonly CONFIG_END="# END V-LINK LITE"
@@ -29,7 +29,9 @@ CONFIGURE_HARDWARE=true
 FIRST_BOOT_MODE=false
 HARDWARE_CHOICE_EXPLICIT=false
 SOURCE_CHOICE_EXPLICIT=false
+REPOSITORY_EXPLICIT=false
 REBOOT=true
+REPOSITORY="$DEFAULT_REPOSITORY"
 SOURCE_DIR=""
 SOURCE_REF=""
 LIN_PORT=""
@@ -403,6 +405,8 @@ support.
 Options:
   --yes                 Non-interactive mode; accept defaults/prompts.
   --user USER           User that will run the kiosk (defaults to SUDO_USER).
+  --repo OWNER/REPO     GitHub repository to use for releases and refs
+                        (default: BoostedMoose/v-link).
   --source-dir PATH     Install application files from a local checkout.
   --ref REF             Download, build and install this Git branch or tag.
   --lin-port PATH       Serial device for LIN controls (for example a stable
@@ -413,9 +417,19 @@ Options:
   --first-boot          First-boot mode used by the prepared-SD launcher.
   -h, --help            Show this help.
 
-Without --yes, --ref/--source-dir and --hardware/--no-hardware, the installer
-shows an installation plan, asks which hardware mode to use, and can list the
-repository branches from GitHub for selection.
+Without --yes, the installer can select the official repository, the
+PabloMartin97/v-link development fork or another OWNER/REPO, then install its
+latest stable release, a branch/tag, or an available local checkout.
+
+Examples:
+  sudo ./Install-Lite.sh --yes
+      Install the latest stable release from BoostedMoose/v-link.
+
+  sudo ./Install-Lite.sh --repo PabloMartin97/v-link --yes
+      Install the latest stable release available in the development fork.
+
+  sudo ./Install-Lite.sh --repo PabloMartin97/v-link --ref Lite-os-for-pr
+      Install the Lite-os-for-pr branch from the development fork.
 EOF
 }
 
@@ -469,6 +483,17 @@ show_phase() {
 die() {
     printf '\n[V-Link Lite] ERROR: %s\n' "$*" >&2
     exit 1
+}
+
+validate_repository() {
+    local repository="$1"
+    local owner="${repository%%/*}"
+    local name="${repository#*/}"
+
+    [[ "$repository" == */* && "$owner" != "$repository" ]] || return 1
+    [[ "$owner" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+    [[ "$name" != "." && "$name" != ".." ]] || return 1
 }
 
 node_is_compatible() {
@@ -672,6 +697,35 @@ EOF
     systemctl enable v-link-firstboot-cleanup.service >/dev/null
 }
 
+select_repository() {
+    local choice=""
+    local custom_repository=""
+
+    show_interactive_screen "Repository"
+    printf 'Choose V-Link repository:\n'
+    printf '  1) BoostedMoose/v-link      [official]\n'
+    printf '  2) PabloMartin97/v-link     [development fork]\n'
+    printf '  3) Custom OWNER/REPO\n'
+
+    while true; do
+        read -r -p 'Selection [1]: ' choice
+        [[ -n "$choice" ]] || choice=1
+        case "$choice" in
+            1) REPOSITORY="$DEFAULT_REPOSITORY"; return ;;
+            2) REPOSITORY="PabloMartin97/v-link"; return ;;
+            3)
+                read -r -p 'GitHub repository (OWNER/REPO): ' custom_repository
+                if validate_repository "$custom_repository"; then
+                    REPOSITORY="$custom_repository"
+                    return
+                fi
+                printf 'Invalid GitHub repository; use OWNER/REPO.\n'
+                ;;
+            *) printf 'Please select 1, 2 or 3.\n' ;;
+        esac
+    done
+}
+
 fetch_github_branch_names() {
     local url="https://api.github.com/repos/$REPOSITORY/branches?per_page=100"
     local payload=""
@@ -699,7 +753,7 @@ select_github_branch() {
     local index
 
     show_interactive_screen "Source branch"
-    printf 'Loading branches from GitHub...\n'
+    printf 'Loading branches from %s...\n' "$REPOSITORY"
     mapfile -t branches < <(fetch_github_branch_names || true)
     show_interactive_screen "Source branch"
 
@@ -710,7 +764,7 @@ select_github_branch() {
         return
     fi
 
-    printf '\nAvailable GitHub branches:\n'
+    printf '\nAvailable GitHub branches from %s:\n' "$REPOSITORY"
     for index in "${!branches[@]}"; do
         printf '  %2d) %s\n' "$((index + 1))" "${branches[index]}"
     done
@@ -733,9 +787,10 @@ select_install_source() {
 
     show_interactive_screen "Installation source"
     printf 'Choose what V-Link source to install:\n'
-    printf '  1) GitHub branch             [recommended for development / testing]\n'
+    printf '  1) Latest stable release\n'
+    printf '  2) GitHub branch or tag\n'
     if [[ -n "$local_checkout" ]]; then
-        printf '  2) This local checkout       [%s]\n' "$local_checkout"
+        printf '  3) This local checkout       [%s]\n' "$local_checkout"
     fi
 
     while true; do
@@ -743,10 +798,16 @@ select_install_source() {
         [[ -n "$choice" ]] || choice=1
         case "$choice" in
             1)
-                select_github_branch
+                SOURCE_DIR=""
+                SOURCE_REF=""
                 return
                 ;;
             2)
+                SOURCE_DIR=""
+                select_github_branch
+                return
+                ;;
+            3)
                 if [[ -n "$local_checkout" ]]; then
                     SOURCE_DIR="$local_checkout"
                     SOURCE_REF=""
@@ -783,17 +844,20 @@ show_install_plan() {
     elif [[ -n "$SOURCE_REF" ]]; then
         source_description="GitHub branch/tag: $SOURCE_REF"
     else
-        source_description="No supported Lite source selected"
+        source_description="Latest stable release"
     fi
 
     show_interactive_screen "Confirmation"
     printf '============================================================\n'
     printf 'Installation plan\n'
     printf '============================================================\n'
-    printf 'Source:   %s\n' "$source_description"
-    printf 'User:     %s\n' "$TARGET_USER"
-    printf 'Hardware: %s\n' "$([[ "$CONFIGURE_HARDWARE" == true ]] && printf 'ENABLED' || printf 'DISABLED')"
-    printf 'Reboot:   %s\n' "$([[ "$REBOOT" == true ]] && printf 'yes' || printf 'no')"
+    if [[ -z "$SOURCE_DIR" ]]; then
+        printf 'Repository: %s\n' "$REPOSITORY"
+    fi
+    printf 'Source:     %s\n' "$source_description"
+    printf 'User:       %s\n' "$TARGET_USER"
+    printf 'Hardware:   %s\n' "$([[ "$CONFIGURE_HARDWARE" == true ]] && printf 'ENABLED' || printf 'DISABLED')"
+    printf 'Reboot:     %s\n' "$([[ "$REBOOT" == true ]] && printf 'yes' || printf 'no')"
 
     if [[ -n "$SOURCE_REF" ]]; then
         cat <<EOF
@@ -843,6 +907,9 @@ validate_source() {
     for required in \
         V-Link.py requirements.txt Update.sh \
         backend/server.py \
+        updater/__init__.py \
+        updater/releases.py \
+        updater/keepalive.py \
         resources/dtoverlays/v-link.dtbo \
         resources/dtoverlays/mcp2515-can1.dtbo \
         resources/dtoverlays/mcp2515-can2.dtbo; do
@@ -991,6 +1058,12 @@ while (($#)); do
             TARGET_USER="$2"
             shift
             ;;
+        --repo)
+            (($# >= 2)) || die "--repo requires OWNER/REPO"
+            REPOSITORY="$2"
+            REPOSITORY_EXPLICIT=true
+            shift
+            ;;
         --source-dir)
             (($# >= 2)) || die "--source-dir requires a path"
             SOURCE_DIR="$2"
@@ -1034,6 +1107,8 @@ done
 
 show_phase 1 7 "Setup"
 
+validate_repository "$REPOSITORY" || \
+    die "--repo must use GitHub OWNER/REPO syntax"
 [[ -z "$SOURCE_DIR" || -z "$SOURCE_REF" ]] || \
     die "use either --source-dir or --ref, not both"
 if [[ -n "$SOURCE_DIR" || -n "$SOURCE_REF" ]]; then
@@ -1098,6 +1173,9 @@ fi
 if [[ "$ASSUME_YES" != true ]]; then
     print_welcome
     wait_for_internet
+    if [[ "$REPOSITORY_EXPLICIT" != true ]]; then
+        select_repository
+    fi
     if [[ "$SOURCE_CHOICE_EXPLICIT" != true ]]; then
         select_install_source "$LOCAL_SOURCE_CANDIDATE"
     fi
@@ -1106,11 +1184,7 @@ if [[ "$ASSUME_YES" != true ]]; then
     fi
     show_install_plan
     confirm "Continue with this installation plan?" || die "installation cancelled by user"
-elif [[ "$SOURCE_CHOICE_EXPLICIT" != true && -n "$LOCAL_SOURCE_CANDIDATE" ]]; then
-    SOURCE_DIR="$LOCAL_SOURCE_CANDIDATE"
 fi
-[[ -n "$SOURCE_DIR" || -n "$SOURCE_REF" ]] || \
-    die "the current published release lacks the Lite installation payload; use --ref or --source-dir"
 
 [[ -z "$LIN_PORT" || "$CONFIGURE_HARDWARE" == true ]] || \
     die "--lin-port requires hardware mode"
@@ -1245,7 +1319,7 @@ fi
 show_phase 3 7 "V-Link source"
 
 if [[ -n "$SOURCE_REF" ]]; then
-    log "Downloading source ref '$SOURCE_REF' from GitHub"
+    log "Downloading source ref '$SOURCE_REF' from $REPOSITORY"
     TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
     chown "$TARGET_USER:$TARGET_GROUP" "$TEMP_DIR"
     runuser -u "$TARGET_USER" -- git \
@@ -1254,7 +1328,7 @@ if [[ -n "$SOURCE_REF" ]]; then
         "https://github.com/$REPOSITORY.git" "$TEMP_DIR/source"
     SOURCE_DIR="$TEMP_DIR/source"
 elif [[ -z "$SOURCE_DIR" ]]; then
-    log "Downloading the latest V-Link release"
+    log "Downloading the latest V-Link release from $REPOSITORY"
     if [[ -z "$TEMP_DIR" ]]; then
         TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
     fi
@@ -1344,6 +1418,7 @@ else
     install_app_file "$SOURCE_DIR/V-Link.py" "$APP_DIR/V-Link.py" 0755
     install_app_file "$SOURCE_DIR/requirements.txt" "$APP_DIR/requirements.txt" 0644
     replace_app_directory "$SOURCE_DIR/backend" "$APP_DIR/backend"
+    replace_app_directory "$SOURCE_DIR/updater" "$APP_DIR/updater"
     replace_app_directory "$SOURCE_DIR/frontend/dist" "$APP_DIR/frontend/dist"
     replace_app_directory "$SOURCE_DIR/resources/dtoverlays" "$APP_DIR/resources/dtoverlays"
     for optional_file in Update.sh Patch.sh; do
@@ -1377,6 +1452,9 @@ for required_path in \
     "$APP_DIR/Check-Lite.sh" \
     "$APP_DIR/Update.sh" \
     "$APP_DIR/backend/server.py" \
+    "$APP_DIR/updater/__init__.py" \
+    "$APP_DIR/updater/releases.py" \
+    "$APP_DIR/updater/keepalive.py" \
     "$APP_DIR/frontend/dist/index.html"; do
     [[ -e "$required_path" ]] || die "installed application is incomplete: missing $required_path"
 done
@@ -1637,7 +1715,7 @@ APP_DIR="$1"
 APP_PARENT="$(dirname -- "$APP_DIR")"
 MARKER="$APP_PARENT/.v-link-update-active"
 readonly -a APP_ITEMS=(
-    V-Link.py backend frontend resources requirements.txt Patch.sh Check-Lite.sh Update.sh venv
+    V-Link.py backend frontend updater resources requirements.txt Patch.sh Check-Lite.sh Update.sh venv
 )
 
 if [[ "$LOCK_HELD" != true ]]; then

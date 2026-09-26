@@ -30,7 +30,7 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p \
     "$STAGE/package/frontend" \
     "$STAGE/package/frontend/public/assets/svg/logos" \
-    "$STAGE/package/resources/dtoverlays" \
+    "$STAGE/package/resources" \
     "$STAGE/assets"
 
 cp -a frontend/dist "$STAGE/package/frontend/dist"
@@ -47,9 +47,13 @@ cp -a updater "$STAGE/package/updater"
 # Lite installer/runtime files and hardware overlays are also part of the
 # release archive so Raspberry Pi OS Lite can install from a stable release.
 cp -a lite "$STAGE/package/lite"
-cp -a resources/dtoverlays/. "$STAGE/package/resources/dtoverlays/"
+cp -a resources/. "$STAGE/package/resources/"
 
 cp V-Link.py requirements.txt Update.sh "$STAGE/package/"
+cp lite/Check-Lite.sh "$STAGE/package/Check-Lite.sh"
+if [ -f Patch.sh ]; then
+    cp Patch.sh "$STAGE/package/Patch.sh"
+fi
 
 cp Install.sh Uninstall.sh Update.sh "$STAGE/assets/"
 cp lite/Install-Lite.sh "$STAGE/assets/Install-Lite.sh"
@@ -65,15 +69,21 @@ import sys
 
 commit, branch, destination = sys.argv[1:]
 with open(destination, "w", encoding="utf-8") as output:
-    json.dump({"tag": None, "branch": branch, "commit": commit, "prerelease": None}, output, indent=2)
+    json.dump({"tag": None, "branch": branch, "commit": commit,
+               "prerelease": None, "payload_schema": 2}, output, indent=2)
     output.write("\n")
 PY
 
 (
     cd "$STAGE/package"
-    zip -qr "$STAGE/assets/V-Link.zip" \
-        V-Link.py requirements.txt Update.sh updater frontend backend \
-        resources lite .vlink-release.json
+    PACKAGE_ITEMS=(
+        V-Link.py requirements.txt Update.sh Check-Lite.sh
+        updater frontend backend resources lite .vlink-release.json
+    )
+    if [ -f Patch.sh ]; then
+        PACKAGE_ITEMS+=(Patch.sh)
+    fi
+    zip -qr "$STAGE/assets/V-Link.zip" "${PACKAGE_ITEMS[@]}"
 )
 
 # Lite verifies the release archive before installing it.

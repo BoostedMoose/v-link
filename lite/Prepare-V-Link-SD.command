@@ -1,8 +1,12 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-REPOSITORY="PabloMartin97/v-link"
-SOURCE_BRANCH="little-os-test"
+DEFAULT_REPOSITORY="PabloMartin97/v-link"
+DEFAULT_SOURCE_REF="Lite-os-for-pr"
+OFFICIAL_REPOSITORY="BoostedMoose/v-link"
+OFFICIAL_SOURCE_REF="dev"
+REPOSITORY=""
+SOURCE_REF=""
 SOURCE_DIRECTORY="lite"
 INSTALLER_NAME="Install-Lite.sh"
 BOOTSTRAP_NAME="V-Link-FirstBoot.sh"
@@ -23,6 +27,89 @@ fail() {
     printf '\nERROR: %s\n' "$*" >&2
     pause_and_exit 1
 }
+
+usage() {
+    cat <<'EOF'
+Usage: ./Prepare-V-Link-SD.command [--repo OWNER/REPO --ref REF]
+
+Prepare a Raspberry Pi OS Lite SD card for V-Link first boot. Without source
+arguments, an interactive selector offers the development fork by default.
+
+  --repo OWNER/REPO   Repository containing the Lite installer and app source.
+  --ref REF           Branch or tag to pin to one commit.
+  -h, --help          Show this help.
+
+Examples:
+  ./Prepare-V-Link-SD.command
+  ./Prepare-V-Link-SD.command --repo BoostedMoose/v-link --ref dev
+  ./Prepare-V-Link-SD.command --repo PabloMartin97/v-link --ref Lite-os-for-pr
+EOF
+}
+
+validate_repository() {
+    local repository="$1"
+    local owner="${repository%%/*}"
+    local name="${repository#*/}"
+    [[ "$repository" == */* && "$owner" != "$repository" ]] || return 1
+    [[ "$owner" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || return 1
+    [[ "$name" != "." && "$name" != ".." ]] || return 1
+}
+
+validate_source_ref() {
+    local source_ref="$1"
+    [[ "$source_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || return 1
+    [[ "$source_ref" != *//* && "$source_ref" != */ && \
+       "$source_ref" != */../* && "$source_ref" != ../* && "$source_ref" != */.. ]] || return 1
+}
+
+select_source() {
+    local choice="" custom_repository="" custom_ref=""
+    printf 'Choose installer repository and source:\n'
+    printf '  1) PabloMartin97/v-link — Lite-os-for-pr  [development, default]\n'
+    printf '  2) BoostedMoose/v-link  — dev             [official]\n'
+    printf '  3) Custom OWNER/REPO and ref\n'
+    printf 'Selection [1]: '
+    read -r choice || choice=""
+    [[ -n "$choice" ]] || choice=1
+    case "$choice" in
+        1) REPOSITORY="$DEFAULT_REPOSITORY"; SOURCE_REF="$DEFAULT_SOURCE_REF" ;;
+        2) REPOSITORY="$OFFICIAL_REPOSITORY"; SOURCE_REF="$OFFICIAL_SOURCE_REF" ;;
+        3)
+            printf 'GitHub repository (OWNER/REPO): '
+            read -r custom_repository || custom_repository=""
+            validate_repository "$custom_repository" || fail "repository must use GitHub OWNER/REPO syntax"
+            printf 'Branch or tag: '
+            read -r custom_ref || custom_ref=""
+            validate_source_ref "$custom_ref" || fail "invalid GitHub branch or tag"
+            REPOSITORY="$custom_repository"
+            SOURCE_REF="$custom_ref"
+            ;;
+        *) fail "selection must be 1, 2 or 3" ;;
+    esac
+}
+
+REPOSITORY_EXPLICIT=false
+SOURCE_REF_EXPLICIT=false
+while (($#)); do
+    case "$1" in
+        --repo)
+            (($# >= 2)) || fail "--repo requires OWNER/REPO"
+            REPOSITORY="$2"
+            REPOSITORY_EXPLICIT=true
+            shift
+            ;;
+        --ref)
+            (($# >= 2)) || fail "--ref requires a branch or tag"
+            SOURCE_REF="$2"
+            SOURCE_REF_EXPLICIT=true
+            shift
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; fail "unknown option: $1" ;;
+    esac
+    shift
+done
 
 preserve_mode() {
     local reference="$1"
@@ -49,6 +136,22 @@ printf '  - Wi-Fi credentials if you will not use Ethernet\n'
 printf '  - optionally SSH\n\n'
 printf 'An already-flashed or already-prepared card can be refreshed safely;\n'
 printf 'you do not need to format it again between V-Link tests.\n\n'
+
+if [[ "$REPOSITORY_EXPLICIT" != true && "$SOURCE_REF_EXPLICIT" != true ]]; then
+    select_source
+else
+    [[ -n "$REPOSITORY" ]] || REPOSITORY="$DEFAULT_REPOSITORY"
+    if [[ -z "$SOURCE_REF" ]]; then
+        case "$REPOSITORY" in
+            "$OFFICIAL_REPOSITORY") SOURCE_REF="$OFFICIAL_SOURCE_REF" ;;
+            "$DEFAULT_REPOSITORY") SOURCE_REF="$DEFAULT_SOURCE_REF" ;;
+            *) fail "--ref is required with a custom repository" ;;
+        esac
+    fi
+fi
+validate_repository "$REPOSITORY" || fail "repository must use GitHub OWNER/REPO syntax"
+validate_source_ref "$SOURCE_REF" || fail "invalid GitHub branch or tag"
+printf 'Application source: %s @ %s\n\n' "$REPOSITORY" "$SOURCE_REF"
 
 if [[ -n "${V_LINK_BOOT_VOLUME:-}" ]]; then
     BOOT_VOLUME="$V_LINK_BOOT_VOLUME"
@@ -117,14 +220,14 @@ if [[ -f "$SCRIPT_DIR/$INSTALLER_NAME" && -f "$SCRIPT_DIR/$BOOTSTRAP_SOURCE" ]];
 else
     printf '\nResolving the V-Link source branch...\n'
     "$CURL_BIN" -fL --retry 3 \
-        "https://api.github.com/repos/$REPOSITORY/commits/$SOURCE_BRANCH" \
-        -o "$TMPDIR_VLINK/source-commit.json" || fail "Could not resolve GitHub branch $SOURCE_BRANCH"
+        "https://api.github.com/repos/$REPOSITORY/commits/$SOURCE_REF" \
+        -o "$TMPDIR_VLINK/source-commit.json" || fail "Could not resolve GitHub ref $SOURCE_REF"
     SOURCE_SHA="$(LC_ALL=C sed -nE '/^[[:space:]]*"sha":[[:space:]]*"[0-9a-fA-F]{40}",?[[:space:]]*$/ {
         s/^[[:space:]]*"sha":[[:space:]]*"([0-9a-fA-F]{40})",?[[:space:]]*$/\1/
         p
         q
     }' "$TMPDIR_VLINK/source-commit.json")"
-    [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || fail "GitHub returned an invalid commit SHA for $SOURCE_BRANCH"
+    [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || fail "GitHub returned an invalid commit SHA for $SOURCE_REF"
 
     printf '\nDownloading the V-Link first-boot files from commit %s...\n' "$SOURCE_SHA"
     "$CURL_BIN" -fL --retry 3 \
@@ -133,12 +236,12 @@ else
     "$CURL_BIN" -fL --retry 3 \
         "https://raw.githubusercontent.com/$REPOSITORY/$SOURCE_SHA/$SOURCE_DIRECTORY/$BOOTSTRAP_SOURCE" \
         -o "$TMPDIR_VLINK/$BOOTSTRAP_NAME" || fail "Could not download $BOOTSTRAP_NAME"
-    FILE_SOURCE="GitHub branch $SOURCE_BRANCH @ $SOURCE_SHA"
+    FILE_SOURCE="GitHub ref $REPOSITORY $SOURCE_REF @ $SOURCE_SHA"
 fi
 
 /bin/bash -n "$TMPDIR_VLINK/$INSTALLER_NAME" || fail "$INSTALLER_NAME contains a syntax error"
 /bin/bash -n "$TMPDIR_VLINK/$BOOTSTRAP_NAME" || fail "$BOOTSTRAP_NAME contains a syntax error"
-grep -qFx 'readonly V_LINK_FIRST_BOOT_PROTOCOL=2' "$TMPDIR_VLINK/$BOOTSTRAP_NAME" || \
+grep -qFx 'readonly V_LINK_FIRST_BOOT_PROTOCOL=3' "$TMPDIR_VLINK/$BOOTSTRAP_NAME" || \
     fail "$BOOTSTRAP_NAME is too old for this SD preparation helper"
 
 FIRSTRUN_RUNTIME=""
@@ -220,12 +323,15 @@ chmod +x "$INSTALLER_STAGE" "$BOOTSTRAP_STAGE" 2>/dev/null || true
 
 INSTALLER_SHA256="$(/usr/bin/shasum -a 256 "$INSTALLER_STAGE" | awk '{print $1}')"
 BOOTSTRAP_SHA256="$(/usr/bin/shasum -a 256 "$BOOTSTRAP_STAGE" | awk '{print $1}')"
-printf 'SOURCE=%s\nINSTALLER_SHA256=%s\nBOOTSTRAP_SHA256=%s\n' \
-    "$FILE_SOURCE" "$INSTALLER_SHA256" "$BOOTSTRAP_SHA256" >"$CONFIG_STAGE"
+printf 'SOURCE=%s\nREPOSITORY=%s\nSOURCE_REF=%s\nINSTALLER_SHA256=%s\nBOOTSTRAP_SHA256=%s\n' \
+    "$FILE_SOURCE" "$REPOSITORY" "$SOURCE_REF" \
+    "$INSTALLER_SHA256" "$BOOTSTRAP_SHA256" >"$CONFIG_STAGE"
 if [[ -f "$BOOT_VOLUME/$CONFIG_NAME" ]]; then
     preserve_mode "$BOOT_VOLUME/$CONFIG_NAME" "$CONFIG_STAGE"
 fi
 grep -qFx "SOURCE=$FILE_SOURCE" "$CONFIG_STAGE" && \
+    grep -qFx "REPOSITORY=$REPOSITORY" "$CONFIG_STAGE" && \
+    grep -qFx "SOURCE_REF=$SOURCE_REF" "$CONFIG_STAGE" && \
     grep -qFx "INSTALLER_SHA256=$INSTALLER_SHA256" "$CONFIG_STAGE" && \
     grep -qFx "BOOTSTRAP_SHA256=$BOOTSTRAP_SHA256" "$CONFIG_STAGE" || \
     fail "Could not verify staged $CONFIG_NAME"
@@ -268,7 +374,7 @@ printf 'First boot flow:\n'
 printf '  1. Raspberry Pi Imager applies any configured user/network settings.\n'
 printf '  2. Without a configured user, Raspberry Pi OS first asks you to create one.\n'
 printf '  3. V-Link Lite Installer then opens automatically on the screen.\n'
-printf '  4. It checks for Internet, lets you choose the GitHub branch and hardware mode.\n'
+printf '  4. It installs %s @ %s and lets you choose the hardware mode.\n' "$REPOSITORY" "$SOURCE_REF"
 printf '  5. After a successful installation the temporary installer removes itself.\n\n'
 printf 'You can now eject the SD card and put it in the Raspberry Pi.\n'
 pause_and_exit 0

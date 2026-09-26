@@ -459,6 +459,9 @@ class ServerThread(threading.Thread):
             socketio.emit('reverse', shared_state.reverseStatus.is_set(), namespace="/sys")
 
         elif args == 'update':
+            update_block_reason = shared_state.update_block_reason()
+            if update_block_reason:
+                return {'ok': False, 'error': update_block_reason}
             release_id = payload.get('release_id') if isinstance(payload, dict) else None
             try:
                 release = tpool.execute(get_release, release_id)
