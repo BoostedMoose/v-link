@@ -33,7 +33,7 @@ def activate_venv():
         sys.stderr.write('[V-Link] Please ensure the virtual environment is set up correctly. Exiting...\n')
         sys.exit(1)
 
-    if os.path.abspath(sys.prefix) == os.path.abspath(venv_path):
+    if os.path.realpath(sys.prefix) == os.path.realpath(venv_path):
         return
 
     env = os.environ.copy()

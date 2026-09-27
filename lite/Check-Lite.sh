@@ -671,6 +671,8 @@ for required_path in \
     "$APP_DIR/backend/server.py" \
     "$APP_DIR/updater/__init__.py" \
     "$APP_DIR/updater/releases.py" \
+    "$APP_DIR/updater/recovery.py" \
+    "$APP_DIR/updater/launcher.py" \
     "$APP_DIR/updater/keepalive.py" \
     "$APP_DIR/lite/Install-Lite.sh" \
     "$APP_DIR/lite/Check-Lite.sh" \

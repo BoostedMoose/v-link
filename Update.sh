@@ -35,6 +35,23 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+restart_known_good() {
+    cleanup
+    trap - EXIT INT TERM
+    if [ -x "$APP_DIR/../.local/libexec/v-link-launch" ]; then
+        exec "$APP_DIR/../.local/libexec/v-link-launch"
+    fi
+    exec "$PYTHON" "$APP_DIR/V-Link.py"
+}
+
+# Install the stable user-space recovery path before the transaction starts.
+if [ -f "$APP_DIR/updater/launcher.py" ]; then
+    if ! "$PYTHON" "$APP_DIR/updater/launcher.py" --install --app-dir "$APP_DIR"; then
+        echo "Could not install the recovery-aware Desktop launcher." >&2
+        restart_known_good
+    fi
+fi
+
 if "$PYTHON" "$APP_DIR/updater/releases.py" --app-dir "$APP_DIR" "$@"; then
     echo "Update completed. Rebooting..."
     cleanup
@@ -42,6 +59,6 @@ if "$PYTHON" "$APP_DIR/updater/releases.py" --app-dir "$APP_DIR" "$@"; then
     sudo reboot
 else
     echo "Update failed or was cancelled. The installed app was kept."
-    echo "If the app closed for this update, reboot or run: $PYTHON $APP_DIR/V-Link.py"
-    exit 1
+    echo "Restarting the known-good V-Link installation..."
+    restart_known_good
 fi

@@ -909,6 +909,8 @@ validate_source() {
         backend/server.py \
         updater/__init__.py \
         updater/releases.py \
+        updater/recovery.py \
+        updater/launcher.py \
         updater/keepalive.py \
         lite/Install-Lite.sh \
         lite/Check-Lite.sh \

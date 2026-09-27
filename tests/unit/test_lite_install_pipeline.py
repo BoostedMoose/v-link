@@ -1,13 +1,17 @@
 """Host-side tests for the Lite SD bootstrap; never mount or alter a real SD."""
 
 import ast
+import errno
 import hashlib
 import json
 import os
+import pty
+import select
 import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -328,6 +332,72 @@ def stage_firstboot(boot, system, valid=True, direct=False, *,
                           capture_output=True, env=env, timeout=30)
 
 
+def staged_installer_helper(root, installer_status, tee_status=0):
+    boot = root / "boot"
+    system = root / "system"
+    staged = stage_firstboot(boot, system)
+    assert staged.returncode == 0, (boot / "v-link-firstboot.log").read_text()
+
+    home = root / "test-user"
+    home.mkdir()
+    installer = system / "usr/local/libexec/v-link-install-lite"
+    installer.write_text(
+        "#!/bin/bash\nprintf '%s\\n' 'simulated installer output'\n"
+        f"exit {installer_status}\n")
+    installer.chmod(0o755)
+    user_helper = system / "usr/local/sbin/v-link-firstboot-user"
+    user_helper.write_text("#!/bin/bash\nprintf '%s\\n' test-user\n")
+    user_helper.chmod(0o755)
+
+    fake_bin = root / "helper-bin"
+    fake_bin.mkdir()
+    getent = fake_bin / "getent"
+    getent.write_text(
+        "#!/bin/bash\n"
+        f"printf '%s\\n' 'test-user:x:1000:1000::{home}:/bin/bash'\n")
+    getent.chmod(0o755)
+    if tee_status:
+        tee = fake_bin / "tee"
+        tee.write_text(f"#!/bin/bash\ncat\nexit {tee_status}\n")
+        tee.chmod(0o755)
+
+    helper = system / "usr/local/sbin/v-link-firstboot-installer"
+    log = system / "var/log/v-link-firstboot-installer.log"
+    env = {**os.environ, "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"]}
+    return helper, log, env
+
+
+def run_helper_on_pty(helper, env):
+    master, slave = pty.openpty()
+    process = subprocess.Popen(
+        ["bash", str(helper)], stdin=slave, stdout=slave, stderr=slave, env=env)
+    os.close(slave)
+    output = bytearray()
+    prompt = b"Press Enter to return to the console..."
+    deadline = time.monotonic() + 10
+    try:
+        while prompt not in output and time.monotonic() < deadline:
+            readable, _, _ = select.select([master], [], [], 0.2)
+            if readable:
+                try:
+                    output.extend(os.read(master, 4096))
+                except OSError as error:
+                    if error.errno != errno.EIO:
+                        raise
+                    break
+            if process.poll() is not None:
+                break
+        waiting = process.poll() is None
+        os.write(master, b"\n")
+        status = process.wait(timeout=10)
+    finally:
+        os.close(master)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    return status, waiting, output.decode(errors="replace")
+
+
 def test_firstboot_rejects_bad_hash_before_staging():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -405,6 +475,68 @@ def test_firstboot_installer_uses_tty8_and_returns_to_tty1():
         assert "TTYPath=/dev/tty1" not in unit
 
 
+def test_firstboot_installer_success_has_no_failure_prompt_or_pause():
+    with tempfile.TemporaryDirectory() as directory:
+        helper, log, env = staged_installer_helper(Path(directory), 0)
+        result = subprocess.run(
+            ["bash", str(helper)], stdin=subprocess.DEVNULL, text=True,
+            capture_output=True, env=env, timeout=10)
+        assert result.returncode == 0
+        assert "installation failed" not in result.stderr
+        assert "Press Enter" not in result.stderr
+        assert "simulated installer output" in log.read_text()
+
+
+def test_firstboot_installer_failure_preserves_status_and_reports_log_without_tty():
+    with tempfile.TemporaryDirectory() as directory:
+        helper, log, env = staged_installer_helper(Path(directory), 1)
+        result = subprocess.run(
+            ["bash", str(helper)], stdin=subprocess.DEVNULL, text=True,
+            capture_output=True, env=env, timeout=10)
+        assert result.returncode == 1
+        assert "V-Link Lite installation failed." in result.stderr
+        assert str(log) in result.stderr
+        assert "No further installation steps" in result.stderr
+        assert "Press Enter" not in result.stderr
+
+
+def test_firstboot_installer_preserves_nonstandard_installer_status():
+    with tempfile.TemporaryDirectory() as directory:
+        helper, _log, env = staged_installer_helper(Path(directory), 42)
+        result = subprocess.run(
+            ["bash", str(helper)], stdin=subprocess.DEVNULL, text=True,
+            capture_output=True, env=env, timeout=10)
+        assert result.returncode == 42
+
+
+def test_firstboot_installer_reports_tee_failure_when_installer_succeeds():
+    with tempfile.TemporaryDirectory() as directory:
+        helper, _log, env = staged_installer_helper(
+            Path(directory), installer_status=0, tee_status=73)
+        result = subprocess.run(
+            ["bash", str(helper)], stdin=subprocess.DEVNULL, text=True,
+            capture_output=True, env=env, timeout=10)
+        assert result.returncode == 73
+        assert "V-Link Lite installation failed." in result.stderr
+        assert "Installer logging failed (tee exited with status 73)." in result.stderr
+
+
+def test_firstboot_installer_waits_on_tty_before_service_can_return_to_tty1():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        helper, _log, env = staged_installer_helper(root, 1)
+        status, waiting, output = run_helper_on_pty(helper, env)
+        unit = (root / "system/etc/systemd/system/v-link-firstboot.service").read_text()
+        helper_source = helper.read_text()
+        assert waiting is True
+        assert status == 1
+        assert "V-Link Lite installation failed." in output
+        assert "Press Enter to return to the console..." in output
+        assert helper_source.index("read -r -p") < helper_source.index('exit "$failure_status"')
+        assert "ExecStart=" + str(helper) in unit
+        assert "ExecStopPost=-/usr/bin/chvt 1" in unit
+
+
 def test_firstboot_direct_removes_only_its_temporary_cmdline_arguments():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -450,7 +582,8 @@ def test_lite_installer_cache_and_cleanup_remain_scoped():
 def make_minimal_lite_source(root):
     required_files = (
         "V-Link.py", "requirements.txt", "Update.sh", "backend/server.py",
-        "updater/__init__.py", "updater/releases.py", "updater/keepalive.py",
+        "updater/__init__.py", "updater/releases.py", "updater/recovery.py",
+        "updater/launcher.py", "updater/keepalive.py",
         "resources/dtoverlays/v-link.dtbo",
         "resources/dtoverlays/mcp2515-can1.dtbo",
         "resources/dtoverlays/mcp2515-can2.dtbo", "lite/Install-Lite.sh",
@@ -493,7 +626,8 @@ def test_lite_source_validation_requires_complete_updater_package():
         "validate_lite_session_launcher() { return 0; }\n"
         + function + "\nvalidate_source \"$1\"\n")
     updater_files = (
-        "updater/__init__.py", "updater/releases.py", "updater/keepalive.py")
+        "updater/__init__.py", "updater/releases.py", "updater/recovery.py",
+        "updater/launcher.py", "updater/keepalive.py")
 
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / "source"
@@ -740,7 +874,7 @@ def test_lite_runtime_installs_updater_as_a_transactional_directory():
         destination = root / "app/updater"
         source.mkdir(parents=True)
         destination.mkdir(parents=True)
-        for filename in ("__init__.py", "releases.py", "keepalive.py"):
+        for filename in ("__init__.py", "releases.py", "recovery.py", "launcher.py", "keepalive.py"):
             (source / filename).write_text(f"new {filename}\n")
         (destination / "releases.py").write_text("old updater\n")
         script = (
@@ -751,7 +885,7 @@ def test_lite_runtime_installs_updater_as_a_transactional_directory():
             ["bash", "-c", script, "bash", str(source), str(destination)],
             text=True, capture_output=True)
         assert result.returncode == 0, result.stderr
-        for filename in ("__init__.py", "releases.py", "keepalive.py"):
+        for filename in ("__init__.py", "releases.py", "recovery.py", "launcher.py", "keepalive.py"):
             assert (destination / filename).read_text() == f"new {filename}\n"
         assert not Path(str(destination) + ".v-link-old").exists()
 
@@ -871,7 +1005,7 @@ def test_interrupted_update_recovery_restores_lite_directory():
 def test_lite_health_check_requires_complete_updater_package():
     check = CHECK.read_text()
     application = check.split("printf '\\nApplication\\n'", 1)[1]
-    for relative in ("__init__.py", "releases.py", "keepalive.py"):
+    for relative in ("__init__.py", "releases.py", "recovery.py", "launcher.py", "keepalive.py"):
         assert f'"$APP_DIR/updater/{relative}"' in application
 
 

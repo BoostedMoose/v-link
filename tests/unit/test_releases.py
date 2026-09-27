@@ -63,6 +63,8 @@ def make_modern_archive(path, commit=SHA, *, patch=False, omit=(), schema=2):
         "frontend/dist/index.html": "new frontend",
         "updater/__init__.py": "",
         "updater/releases.py": "new updater",
+        "updater/recovery.py": "new recovery",
+        "updater/launcher.py": "new launcher",
         "updater/keepalive.py": "new keepalive",
         "Update.sh": "new update script",
         "lite/Install-Lite.sh": "new Lite installer",
@@ -91,6 +93,15 @@ def mock_release_download(monkeypatch, archive):
     monkeypatch.setattr(
         releases, "_download",
         lambda _url, destination, _digest: shutil.copyfile(archive, destination))
+
+    def fake_candidate(_stage, candidate, _modern):
+        python = candidate / "bin/python"
+        python.parent.mkdir(parents=True)
+        python.write_text("#!/bin/sh\nexit 0\n")
+        python.chmod(0o755)
+
+    monkeypatch.setattr(releases, "_prepare_candidate_venv", fake_candidate)
+    monkeypatch.setattr(releases, "_sync_prepared_payload", lambda: None)
 
 
 def test_package_script_builds_complete_modern_zip(tmp_path):
@@ -132,7 +143,8 @@ def test_package_script_builds_complete_modern_zip(tmp_path):
             ".vlink-release.json",
         }
         for name in (
-                "updater/__init__.py", "updater/releases.py", "updater/keepalive.py",
+                "updater/__init__.py", "updater/releases.py", "updater/recovery.py",
+                "updater/launcher.py", "updater/keepalive.py",
                 "lite/Install-Lite.sh", "lite/Check-Lite.sh",
                 "resources/dtoverlays/v-link.dtbo"):
             assert name in names
@@ -197,7 +209,8 @@ def test_complete_modern_release_installs_all_versioned_payload(tmp_path, monkey
     expected = (
         "V-Link.py", "requirements.txt", "backend/version.py",
         "frontend/dist/index.html", "updater/__init__.py", "updater/releases.py",
-        "updater/keepalive.py", "Update.sh", "lite/Install-Lite.sh",
+        "updater/recovery.py", "updater/launcher.py", "updater/keepalive.py",
+        "Update.sh", "lite/Install-Lite.sh",
         "lite/Check-Lite.sh", "resources/dtoverlays/v-link.dtbo",
         "Check-Lite.sh", "Patch.sh", ".vlink-release.json",
     )
@@ -237,7 +250,8 @@ def run_update_script(tmp_path, *, lite):
     shutil.copy2(ROOT / "Update.sh", app / "Update.sh")
     (app / "updater/releases.py").write_text("test updater\n")
     log = tmp_path / ("lite.log" if lite else "desktop.log")
-    python.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >'{log}'\nexit 1\n")
+    python.write_text(
+        f"#!/bin/sh\ncase \"$1\" in *releases.py) printf '%s\\n' \"$*\" >'{log}';; esac\nexit 1\n")
     python.chmod(0o755)
     if lite:
         (app / ".v-link-lite-runtime").touch()
@@ -268,7 +282,8 @@ def test_partial_updater_payloads_are_rejected_before_install(tmp_path):
     cases = (
         ("updater without Update.sh", ("Update.sh",)),
         ("Update.sh without updater", (
-            "updater/__init__.py", "updater/releases.py", "updater/keepalive.py")),
+            "updater/__init__.py", "updater/releases.py", "updater/recovery.py",
+            "updater/launcher.py", "updater/keepalive.py")),
         ("updater without releases.py", ("updater/releases.py",)),
     )
     for label, omitted in cases:
@@ -278,6 +293,57 @@ def test_partial_updater_payloads_are_rejected_before_install(tmp_path):
         make_modern_archive(archive, omit=omitted)
         with pytest.raises(releases.UpdateError, match="incomplete updater"):
             releases._extract(archive, stage)
+
+
+def test_older_schema_two_payload_without_transaction_modules_remains_valid(tmp_path):
+    archive = tmp_path / "older-schema-two.zip"
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    make_modern_archive(
+        archive, omit=("updater/recovery.py", "updater/launcher.py"))
+    manifest = releases._extract(archive, stage)
+    assert manifest["payload_schema"] == releases.PAYLOAD_SCHEMA
+
+
+def test_transaction_engine_is_preserved_across_downgrade(tmp_path):
+    app = tmp_path / "app"
+    stage = tmp_path / "stage"
+    (app / "updater").mkdir(parents=True)
+    (stage / "updater").mkdir(parents=True)
+    (app / "updater/recovery.py").write_text("current recovery")
+    (app / "updater/releases.py").write_text("current updater")
+    (app / "Update.sh").write_text("current wrapper")
+    (stage / "updater/releases.py").write_text("old updater")
+    (stage / "Update.sh").write_text("old wrapper")
+
+    releases._preserve_transaction_engine(stage, app)
+
+    assert (stage / "updater/releases.py").read_text() == "current updater"
+    assert (stage / "updater/recovery.py").read_text() == "current recovery"
+    assert (stage / "Update.sh").read_text() == "current wrapper"
+
+
+def test_full_downgrade_to_pre_b_schema_two_keeps_transaction_engine(
+        tmp_path, monkeypatch):
+    app = tmp_path / "app"
+    (app / "updater").mkdir(parents=True)
+    (app / "V-Link.py").write_text("current app")
+    (app / "updater/releases.py").write_text("B updater")
+    (app / "updater/recovery.py").write_text("B recovery")
+    (app / "updater/launcher.py").write_text("B launcher")
+    (app / "Update.sh").write_text("B wrapper")
+    archive = tmp_path / "pre-b-schema-two.zip"
+    make_modern_archive(
+        archive, omit=("updater/recovery.py", "updater/launcher.py"))
+    mock_release_download(monkeypatch, archive)
+
+    releases.install(2, app)
+
+    assert (app / "V-Link.py").read_text() == "new app"
+    assert (app / "updater/releases.py").read_text() == "B updater"
+    assert (app / "updater/recovery.py").read_text() == "B recovery"
+    assert (app / "updater/launcher.py").read_text() == "B launcher"
+    assert (app / "Update.sh").read_text() == "B wrapper"
 
 
 def test_partial_modern_lite_payloads_are_rejected_before_install(tmp_path):
@@ -310,6 +376,27 @@ def test_incomplete_modern_payload_is_rejected_before_pip_or_app_swap(
 
     assert not marker.exists()
     assert (app / "V-Link.py").read_text() == "old app"
+
+
+def test_candidate_failure_leaves_active_app_and_venv_untouched(tmp_path, monkeypatch):
+    app = tmp_path / "app"
+    (app / "venv").mkdir(parents=True)
+    (app / "venv/known-good").write_text("old venv")
+    (app / "V-Link.py").write_text("old app")
+    archive = tmp_path / "release.zip"
+    make_modern_archive(archive)
+    mock_release_download(monkeypatch, archive)
+    monkeypatch.setattr(
+        releases, "_prepare_candidate_venv",
+        lambda *_args: (_ for _ in ()).throw(releases.UpdateError("candidate failed")))
+
+    with pytest.raises(releases.UpdateError, match="candidate failed"):
+        releases.install(2, app)
+
+    assert (app / "V-Link.py").read_text() == "old app"
+    assert (app / "venv/known-good").read_text() == "old venv"
+    assert not (tmp_path / ".v-link-update-active").exists()
+    assert not list(tmp_path.glob(".v-link-update." + "?" * 32))
 
 
 def test_payload_schema_distinguishes_legacy_modern_and_unknown(tmp_path):
@@ -416,17 +503,28 @@ def test_file_swap_failure_restores_previous_app(tmp_path, monkeypatch):
     stage = tmp_path / "stage"
     stage.mkdir()
     (stage / "V-Link.py").write_text("new app")
-    real_replace = releases.os.replace
+    transaction_id = "1" * 32
+    transaction = tmp_path / f".v-link-update.{transaction_id}"
+    (transaction / "backup").mkdir(parents=True)
+    candidate = app / ".v-link-venvs" / transaction_id
+    (candidate / "bin").mkdir(parents=True)
+    state = releases._transaction_state(
+        transaction_id, app, stage, {"commit": SHA})
+    releases.recovery.write_state(transaction, state)
+    real_replace = releases._durable_replace
 
     def fail_new_app(source, destination):
         if source == stage / "V-Link.py":
             raise OSError("simulated disk error")
         return real_replace(source, destination)
 
-    monkeypatch.setattr(releases.os, "replace", fail_new_app)
+    monkeypatch.setattr(releases, "_durable_replace", fail_new_app)
+    monkeypatch.setattr(releases, "_validate_activated", lambda *_args: None)
     with pytest.raises(releases.UpdateError, match="previous version restored"):
-        releases._replace(stage, app, {"commit": SHA})
+        releases._activate(
+            stage, app, {"commit": SHA}, transaction, candidate, state)
     assert (app / "V-Link.py").read_text() == "old app"
+    assert not (tmp_path / ".v-link-update-active").exists()
 
 
 def test_modern_swap_failure_restores_all_previous_versioned_components(
@@ -451,17 +549,26 @@ def test_modern_swap_failure_restores_all_previous_versioned_components(
     stage = tmp_path / "stage"
     stage.mkdir()
     releases._extract(archive, stage)
-    real_replace = releases.os.replace
+    transaction_id = "2" * 32
+    transaction = tmp_path / f".v-link-update.{transaction_id}"
+    (transaction / "backup").mkdir(parents=True)
+    candidate = app / ".v-link-venvs" / transaction_id
+    (candidate / "bin").mkdir(parents=True)
+    metadata = {"commit": SHA, "payload_schema": releases.PAYLOAD_SCHEMA}
+    state = releases._transaction_state(transaction_id, app, stage, metadata)
+    releases.recovery.write_state(transaction, state)
+    real_replace = releases._durable_replace
 
     def fail_resources(source, destination):
         if source == stage / "resources/dtoverlays":
             raise OSError("simulated resources swap error")
         return real_replace(source, destination)
 
-    monkeypatch.setattr(releases.os, "replace", fail_resources)
+    monkeypatch.setattr(releases, "_durable_replace", fail_resources)
+    monkeypatch.setattr(releases, "_validate_activated", lambda *_args: None)
     with pytest.raises(releases.UpdateError, match="previous version restored"):
-        releases._replace(
-            stage, app, {"commit": SHA, "payload_schema": releases.PAYLOAD_SCHEMA})
+        releases._activate(
+            stage, app, metadata, transaction, candidate, state)
 
     for name, content in old_files.items():
         assert (app / name).read_text() == content

@@ -157,9 +157,38 @@ trap copy_log_to_boot_partition EXIT
 target_user="\$("$USER_HELPER")" || exit 1
 target_home="\$(getent passwd "\$target_user" | cut -d: -f6)"
 cd "\$target_home"
+set +e
 "$INSTALLER_STAGED" --first-boot --user "\$target_user" \
     --repo "$SOURCE_REPOSITORY" --ref "$SOURCE_REF" 2>&1 | \
     tee -a "$INSTALL_LOG"
+pipeline_status=("\${PIPESTATUS[@]}")
+set -e
+
+installer_status="\${pipeline_status[0]}"
+tee_status="\${pipeline_status[1]}"
+if ((installer_status == 0 && tee_status == 0)); then
+    exit 0
+fi
+failure_status="\$installer_status"
+if ((failure_status == 0)); then
+    failure_status="\$tee_status"
+fi
+
+printf '\n%s\n' '============================================================' >&2
+printf '%s\n' 'V-Link Lite installation failed.' >&2
+printf '%s\n\n' '============================================================' >&2
+if ((tee_status == 0)); then
+    printf '%s\n\n  %s\n\n' 'The error above has been saved to:' "$INSTALL_LOG" >&2
+else
+    printf 'Installer logging failed (tee exited with status %s).\n\n' "\$tee_status" >&2
+    printf '%s\n\n  %s\n\n' 'Expected log path:' "$INSTALL_LOG" >&2
+fi
+printf '%s\n' 'No further installation steps will be performed.' >&2
+if [[ -t 0 ]]; then
+    printf '\n' >&2
+    read -r -p 'Press Enter to return to the console... ' _ || true
+fi
+exit "\$failure_status"
 EOF
 chmod 0755 "$INSTALL_HELPER"
 

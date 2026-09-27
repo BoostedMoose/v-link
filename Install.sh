@@ -366,19 +366,16 @@ fi
 
 # Step 5: Create autostart file for V-Link
 if confirm_action "Do you want to create an autostart file for V-Link?"; then
-    AUTOSTART_FILE="/etc/xdg/autostart/v-link.desktop"
     output_path="/home/$CURRENT_USER/v-link"
+    LAUNCHER_INSTALLER="$output_path/updater/launcher.py"
 
-    if [[ ! -f "$AUTOSTART_FILE" ]] || confirm_action "$AUTOSTART_FILE exists. Overwrite it?"; then
-        sudo bash -c "cat > $AUTOSTART_FILE <<EOL
-[Desktop Entry]
-Name=V-Link
-Exec=sh -c 'python ~/v-link/V-Link.py'
-Type=Application
-EOL"
-        echo "Autostart file created or overwritten."
+    if [[ -f "$LAUNCHER_INSTALLER" ]]; then
+        sudo -u "$CURRENT_USER" "$output_path/venv/bin/python" \
+            "$LAUNCHER_INSTALLER" --install --app-dir "$output_path"
+        echo "Recovery-aware user autostart created."
     else
-        echo "Skipped creating autostart file."
+        echo "Updater launcher is missing: $LAUNCHER_INSTALLER"
+        exit 1
     fi
 fi
 

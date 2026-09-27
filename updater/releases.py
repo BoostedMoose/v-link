@@ -10,11 +10,16 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 import zipfile
+
+try:
+    from . import recovery
+except ImportError:  # Direct execution from updater/releases.py.
+    import recovery
 
 
 REPOSITORY = "BoostedMoose/v-link"
@@ -37,6 +42,7 @@ MAX_PAGES = 5
 MAX_DOWNLOAD = 500 * 1024 * 1024
 MAX_UNPACKED = 1024 * 1024 * 1024
 SHA = re.compile(r"^[0-9a-f]{40}$")
+RECOVERY_HELPER = ".local/libexec/v-link-recovery"
 
 
 class UpdateError(Exception):
@@ -269,48 +275,219 @@ def _managed_paths(stage, metadata):
     return paths
 
 
-def _replace(stage, app_dir, metadata):
-    """Swap managed paths and restore the previous app if a swap fails."""
-    app_dir = Path(app_dir)
-    backup = Path(tempfile.mkdtemp(prefix=".vlink-backup-", dir=app_dir))
-    paths = _managed_paths(stage, metadata)
-    (stage / MANIFEST).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    moved_old = []
-    moved_new = []
+def _lexists(path):
+    return os.path.lexists(path)
+
+
+def _durable_replace(source, destination):
+    source = Path(source)
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(source, destination)
+    recovery._fsync_dir(source.parent)
+    if source.parent != destination.parent:
+        recovery._fsync_dir(destination.parent)
+        recovery._fsync_dir(destination.parent.parent)
+
+
+def _previous_venv(app_dir):
+    path = app_dir / "venv"
+    if path.is_symlink():
+        return {"kind": "symlink", "target": os.readlink(path)}
+    if path.is_dir():
+        return {"kind": "directory"}
+    if _lexists(path):
+        raise UpdateError("The active venv path is neither a directory nor a symlink")
+    return {"kind": "absent"}
+
+
+def _ensure_space(parent, archive_size):
+    # The archive, extracted payload and candidate environment coexist.
+    required = max(128 * 1024 * 1024, int(archive_size or 0) * 3)
+    if shutil.disk_usage(parent).free < required:
+        raise UpdateError("Not enough free space to prepare the update safely")
+
+
+def _sync_prepared_payload():
+    # pip and archive extraction create many files; one filesystem sync keeps
+    # preparation simple and makes their contents durable before activation.
+    os.sync()
+
+
+def _cleanup_abandoned_preparations(app_dir):
+    if _lexists(app_dir.parent / ".v-link-update-active"):
+        return
+    current_venv = (app_dir / "venv").resolve() if _lexists(app_dir / "venv") else None
+    prefix = ".v-link-update."
+    for transaction in app_dir.parent.iterdir():
+        if not transaction.name.startswith(prefix):
+            continue
+        transaction_id = transaction.name[len(prefix):]
+        if recovery.TRANSACTION_RE.fullmatch(transaction_id) is None:
+            continue
+        if transaction.is_symlink() or not transaction.is_dir():
+            continue
+        state_path = transaction / "state.json"
+        if state_path.exists():
+            try:
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (not isinstance(state, dict)
+                    or state.get("schema") != recovery.TRANSACTION_SCHEMA
+                    or state.get("transaction_id") != transaction_id
+                    or state.get("app_dir") != str(app_dir)):
+                continue
+            if isinstance(state.get("previous_venv"), dict):
+                _cleanup_previous_candidate(app_dir, state)
+        candidate = app_dir / ".v-link-venvs" / transaction_id
+        if candidate != current_venv:
+            shutil.rmtree(candidate, ignore_errors=True)
+        shutil.rmtree(transaction, ignore_errors=True)
+
+
+def _prepare_candidate_venv(stage, candidate, modern):
+    if _lexists(candidate):
+        raise UpdateError(f"Candidate venv already exists: {candidate}")
+    candidate.parent.mkdir(parents=True, exist_ok=True)
     try:
-        for name in paths:
-            if (app_dir / name).exists():
-                (backup / name).parent.mkdir(parents=True, exist_ok=True)
-                os.replace(app_dir / name, backup / name)
-                moved_old.append(name)
-        for name in paths:
-            if (stage / name).exists():
-                (app_dir / name).parent.mkdir(parents=True, exist_ok=True)
-                os.replace(stage / name, app_dir / name)
-                moved_new.append(name)
-    except OSError as error:
-        rollback_errors = []
-        for name in reversed(moved_new):
-            target = app_dir / name
+        subprocess.run([sys.executable, "-m", "venv", str(candidate)], check=True)
+        python = candidate / "bin/python"
+        subprocess.run([str(python), "-m", "pip", "install", "-r",
+                        str(stage / "requirements.txt")], check=True)
+        subprocess.run([str(python), "-m", "pip", "check"], check=True)
+        stage_venv = stage / "venv"
+        if _lexists(stage_venv):
+            raise UpdateError("Release archive contains an unexpected venv path")
+        stage_venv.symlink_to(os.path.relpath(candidate, stage))
+        try:
+            command = ([str(python), str(stage / "V-Link.py"), "--help"] if modern else
+                       [str(python), "-m", "py_compile", str(stage / "V-Link.py")])
+            subprocess.run(command, check=True, timeout=120,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        finally:
+            stage_venv.unlink(missing_ok=True)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise UpdateError(f"Candidate Python environment validation failed: {error}") from error
+
+
+def _ensure_recovery_helper(app_dir):
+    source = Path(recovery.__file__).resolve()
+    helper = app_dir.parent / RECOVERY_HELPER
+    try:
+        recovery.install_helper(source, helper)
+    except recovery.RecoveryError as error:
+        raise UpdateError(f"Could not install the external recovery helper: {error}") from error
+    return helper
+
+
+def _transaction_state(transaction_id, app_dir, stage, metadata):
+    paths = _managed_paths(stage, metadata)
+    return {
+        "schema": recovery.TRANSACTION_SCHEMA,
+        "transaction_id": transaction_id,
+        "app_dir": str(app_dir),
+        "phase": "prepared",
+        "managed_paths": paths,
+        "originally_present": [name for name in paths if _lexists(app_dir / name)],
+        "from_release": installed_release(app_dir),
+        "to_release": metadata,
+        "candidate_venv": f".v-link-venvs/{transaction_id}",
+        "previous_venv": _previous_venv(app_dir),
+    }
+
+
+def _preserve_transaction_engine(stage, app_dir):
+    """Do not let an application downgrade remove the durable update engine."""
+    current_updater = app_dir / "updater"
+    if not (current_updater / "recovery.py").is_file():
+        return
+    if any(path.is_symlink() for path in current_updater.rglob("*")):
+        raise UpdateError("The installed updater contains an unsafe symlink")
+    staged_updater = stage / "updater"
+    if _lexists(staged_updater):
+        shutil.rmtree(staged_updater)
+    shutil.copytree(
+        current_updater, staged_updater,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    current_script = app_dir / "Update.sh"
+    if current_script.is_file() and not current_script.is_symlink():
+        shutil.copy2(current_script, stage / "Update.sh")
+
+
+def _write_marker(parent, transaction_id):
+    recovery._atomic_write(parent / ".v-link-update-active", transaction_id + "\n")
+
+
+def _validate_activated(app_dir, candidate, modern):
+    python = app_dir / "venv/bin/python"
+    if os.path.realpath(python) != os.path.realpath(candidate / "bin/python"):
+        raise UpdateError("Activated venv does not resolve to the candidate environment")
+    command = ([str(python), str(app_dir / "V-Link.py"), "--help"] if modern else
+               [str(python), "-m", "py_compile", str(app_dir / "V-Link.py")])
+    try:
+        subprocess.run(command, check=True, timeout=120,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise UpdateError(f"Activated installation validation failed: {error}") from error
+
+
+def _cleanup_previous_candidate(app_dir, state):
+    previous = state["previous_venv"]
+    if previous["kind"] != "symlink":
+        return
+    old_target = (app_dir / previous["target"]).resolve()
+    candidates = (app_dir / ".v-link-venvs").resolve()
+    current = (app_dir / "venv").resolve()
+    if old_target.parent == candidates and old_target != current and old_target.name != state["transaction_id"]:
+        shutil.rmtree(old_target, ignore_errors=True)
+
+
+def _activate(stage, app_dir, metadata, transaction, candidate, state):
+    backup = transaction / "backup"
+    marker_created = False
+    try:
+        state["phase"] = "activating"
+        recovery.write_state(transaction, state)
+        _write_marker(app_dir.parent, state["transaction_id"])
+        marker_created = True
+
+        for name in state["managed_paths"]:
+            source = app_dir / name
+            if _lexists(source):
+                _durable_replace(source, backup / name)
+        for name in state["managed_paths"]:
+            source = stage / name
+            if _lexists(source):
+                _durable_replace(source, app_dir / name)
+
+        active_venv = app_dir / "venv"
+        if _lexists(active_venv):
+            _durable_replace(active_venv, backup / "venv")
+        active_venv.symlink_to(state["candidate_venv"])
+        recovery._fsync_dir(app_dir)
+
+        _validate_activated(app_dir, candidate,
+                            metadata.get("payload_schema") == PAYLOAD_SCHEMA)
+        state["phase"] = "activated"
+        recovery.write_state(transaction, state)
+        (app_dir.parent / ".v-link-update-active").unlink()
+        recovery._fsync_dir(app_dir.parent)
+    except BaseException as error:
+        if marker_created:
             try:
-                if target.is_dir():
-                    shutil.rmtree(target)
-                else:
-                    target.unlink()
-            except OSError as rollback_error:
-                rollback_errors.append(rollback_error)
-        for name in reversed(moved_old):
-            try:
-                (app_dir / name).parent.mkdir(parents=True, exist_ok=True)
-                os.replace(backup / name, app_dir / name)
-            except OSError as rollback_error:
-                rollback_errors.append(rollback_error)
-        if rollback_errors:
-            raise UpdateError(f"Could not restore all app files. Previous files are in {backup}: {rollback_errors[0]}") from error
-        shutil.rmtree(backup)
-        raise UpdateError(f"Could not replace app files; previous version restored: {error}") from error
+                recovery.recover(app_dir, lock_held=True)
+            except recovery.RecoveryError as rollback_error:
+                raise UpdateError(
+                    f"Update failed and rollback is incomplete: {rollback_error}") from error
+        if isinstance(error, (KeyboardInterrupt, SystemExit)):
+            raise
+        if isinstance(error, UpdateError):
+            raise
+        raise UpdateError(f"Could not activate release; previous version restored: {error}") from error
     else:
-        shutil.rmtree(backup, ignore_errors=True)
+        _cleanup_previous_candidate(app_dir, state)
+        shutil.rmtree(transaction, ignore_errors=True)
 
 
 def install(release_id, app_dir):
@@ -319,12 +496,24 @@ def install(release_id, app_dir):
         raise UpdateError(f"App directory does not exist: {app_dir}")
     if (app_dir / ".git").exists():
         raise UpdateError("Cannot install a release over a source checkout")
-    with open(app_dir / ".vlink-update.lock", "w", encoding="utf-8") as lock:
+    if (app_dir / ".v-link-lite-runtime").is_file():
+        raise UpdateError("V-Link Lite updates remain disabled until platform migration is transactional")
+    with open(app_dir.parent / ".v-link-update.lock", "a", encoding="utf-8") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise UpdateError("Another V-Link update is already running") from error
-        return _install_locked(release_id, app_dir)
+        try:
+            recovery.recover(app_dir, lock_held=True)
+        except recovery.RecoveryError as error:
+            raise UpdateError(f"Interrupted update recovery failed: {error}") from error
+        try:
+            _cleanup_abandoned_preparations(app_dir)
+            return _install_locked(release_id, app_dir)
+        except UpdateError:
+            raise
+        except OSError as error:
+            raise UpdateError(f"Update filesystem operation failed: {error}") from error
 
 
 def _install_locked(release_id, app_dir):
@@ -334,10 +523,20 @@ def _install_locked(release_id, app_dir):
     sha = commit_sha(release["tag_name"])
     metadata = {"tag": release["tag_name"], "branch": _branch(release) if release["prerelease"] else "stable",
                 "commit": sha, "prerelease": bool(release["prerelease"])}
-    with tempfile.TemporaryDirectory(prefix=".vlink-stage-", dir=app_dir) as temporary:
-        stage = Path(temporary) / "files"
-        stage.mkdir()
-        archive = Path(temporary) / ASSET_NAME
+    _ensure_space(app_dir.parent, asset.get("size"))
+    transaction_id = uuid.uuid4().hex
+    transaction = app_dir.parent / f".v-link-update.{transaction_id}"
+    stage = transaction / "stage"
+    backup = transaction / "backup"
+    candidate = app_dir / ".v-link-venvs" / transaction_id
+    transaction.mkdir(mode=0o700)
+    stage.mkdir()
+    backup.mkdir()
+    recovery._fsync_dir(app_dir.parent)
+    if os.stat(transaction).st_dev != os.stat(app_dir).st_dev:
+        raise UpdateError("Update transaction and application are on different filesystems")
+    try:
+        archive = transaction / ASSET_NAME
         print("Downloading release archive...", flush=True)
         _download(asset["browser_download_url"], archive, asset.get("digest"))
         print("Checking release archive...", flush=True)
@@ -348,16 +547,23 @@ def _install_locked(release_id, app_dir):
                 raise UpdateError("Release archive was built from a different commit than its tag")
             if packaged_manifest.get("payload_schema") == PAYLOAD_SCHEMA:
                 metadata["payload_schema"] = PAYLOAD_SCHEMA
-        python = app_dir / "venv" / "bin" / "python"
-        if python.is_file():
-            print("Installing Python requirements...", flush=True)
-            try:
-                subprocess.run([str(python), "-m", "pip", "install", "-r", str(stage / "requirements.txt")],
-                               check=True)
-            except (OSError, subprocess.CalledProcessError) as error:
-                raise UpdateError(f"Could not install Python requirements: {error}") from error
+        metadata_path = stage / MANIFEST
+        metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        _preserve_transaction_engine(stage, app_dir)
+        print("Building candidate Python environment...", flush=True)
+        _prepare_candidate_venv(
+            stage, candidate, metadata.get("payload_schema") == PAYLOAD_SCHEMA)
+        _ensure_recovery_helper(app_dir)
+        state = _transaction_state(transaction_id, app_dir, stage, metadata)
+        _sync_prepared_payload()
+        recovery.write_state(transaction, state)
         print("Installing release...", flush=True)
-        _replace(stage, app_dir, metadata)
+        _activate(stage, app_dir, metadata, transaction, candidate, state)
+    except BaseException:
+        if not _lexists(app_dir.parent / ".v-link-update-active"):
+            shutil.rmtree(candidate, ignore_errors=True)
+            shutil.rmtree(transaction, ignore_errors=True)
+        raise
     print(f"Installed {release['tag_name']} ({sha[:12]}).", flush=True)
     return metadata
 
