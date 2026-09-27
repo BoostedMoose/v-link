@@ -2,10 +2,13 @@
 
 import ast
 import hashlib
+import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
+import zipfile
 from pathlib import Path
 
 
@@ -511,6 +514,213 @@ def test_lite_source_validation_requires_complete_updater_package():
             assert f"source is incomplete: missing {relative}" in result.stderr
 
 
+def preflight_functions():
+    source = INSTALL.read_text()
+    body = source.split("lite_source_incompatible() {", 1)[1].split(
+        "\nvalidate_v_link_imports() {", 1)[0]
+    return "lite_source_incompatible() {" + body
+
+
+def archive_lite_source(source, archive):
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for path in sorted(source.rglob("*")):
+            if path.is_file():
+                bundle.write(path, path.relative_to(source).as_posix())
+
+
+def write_preflight_tools(root):
+    fake_bin = root / "bin"
+    fake_bin.mkdir()
+    curl = fake_bin / "curl"
+    curl.write_text('''#!/bin/bash
+set -eu
+url=""
+output=""
+while (($#)); do
+    case "$1" in
+        --output) output="$2"; shift 2 ;;
+        http*) url="$1"; shift ;;
+        *) shift ;;
+    esac
+done
+case "$url" in
+    */releases/latest) cp "$PREFLIGHT_FIXTURES/release.json" "$output" ;;
+    */commits/*) cp "$PREFLIGHT_FIXTURES/ref.json" "$output" ;;
+    */archive/*.tar.gz) cp "$PREFLIGHT_FIXTURES/source.tar.gz" "$output" ;;
+    */V-Link.zip.sha256) cp "$PREFLIGHT_FIXTURES/V-Link.zip.sha256" "$output" ;;
+    */V-Link.zip) cp "$PREFLIGHT_FIXTURES/V-Link.zip" "$output" ;;
+    *) printf 'unexpected URL: %s\n' "$url" >&2; exit 2 ;;
+esac
+''')
+    curl.chmod(0o755)
+    mktemp = fake_bin / "mktemp"
+    mktemp.write_text('''#!/bin/bash
+set -eu
+mkdir -p "$PREFLIGHT_TEMP"
+printf '%s\n' "$PREFLIGHT_TEMP"
+''')
+    mktemp.chmod(0o755)
+    return fake_bin
+
+
+def run_source_preflight(root, *, source_dir="", source_ref=""):
+    fake_bin = write_preflight_tools(root)
+    script = (
+        "set -Eeuo pipefail\n"
+        "log() { :; }\n"
+        "die() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
+        "validate_lite_session_launcher() { return 0; }\n" +
+        validate_source_function() + "\n" + preflight_functions() + "\n"
+        'REPOSITORY="example/v-link"\n'
+        'SOURCE_DIR="${TEST_SOURCE_DIR:-}"\n'
+        'SOURCE_REF="${TEST_SOURCE_REF:-}"\n'
+        'TEMP_DIR=""\n'
+        "preflight_source\n"
+        'printf "validated=%s\\nstaging=%s\\n" "$SOURCE_DIR" "$TEMP_DIR"\n')
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ["PATH"],
+        "PREFLIGHT_FIXTURES": str(root / "fixtures"),
+        "PREFLIGHT_TEMP": str(root / "preflight"),
+        "TEST_SOURCE_DIR": str(source_dir),
+        "TEST_SOURCE_REF": source_ref,
+    }
+    return subprocess.run(
+        ["bash", "-c", script], text=True, capture_output=True, env=env)
+
+
+def prepare_release_preflight(root, *, manifest=None, missing=(), checksum=True):
+    fixtures = root / "fixtures"
+    source = root / "release-source"
+    fixtures.mkdir()
+    make_minimal_lite_source(source)
+    shutil.copy2(source / "lite/Check-Lite.sh", source / "Check-Lite.sh")
+    if manifest is None:
+        manifest = {"commit": "a" * 40, "payload_schema": 2}
+    if manifest is not False:
+        (source / ".vlink-release.json").write_text(json.dumps(manifest))
+    for relative in missing:
+        path = source / relative
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
+    archive = fixtures / "V-Link.zip"
+    archive_lite_source(source, archive)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    (fixtures / "V-Link.zip.sha256").write_text(f"{digest}  V-Link.zip\n")
+    assets = [{
+        "name": "V-Link.zip",
+        "browser_download_url": "https://fixtures.invalid/V-Link.zip",
+    }]
+    if checksum:
+        assets.append({
+            "name": "V-Link.zip.sha256",
+            "browser_download_url": "https://fixtures.invalid/V-Link.zip.sha256",
+        })
+    (fixtures / "release.json").write_text(json.dumps({"assets": assets}))
+    (fixtures / "ref.json").write_text(json.dumps({"sha": "a" * 40}))
+    return source
+
+
+def test_modern_lite_release_passes_preflight_and_keeps_staging(tmp_path):
+    prepare_release_preflight(tmp_path)
+
+    result = run_source_preflight(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert f"validated={tmp_path / 'preflight/source'}" in result.stdout
+    assert f"staging={tmp_path / 'preflight'}" in result.stdout
+    assert (tmp_path / "preflight/source/lite/Install-Lite.sh").is_file()
+
+
+def test_lite_release_preflight_rejects_missing_or_legacy_manifest(tmp_path):
+    cases = (
+        (False, "without-manifest"),
+        ({"commit": "a" * 40}, "legacy-manifest"),
+        ({"payload_schema": 2}, "missing-commit"),
+        ({"commit": "not-a-sha", "payload_schema": 2}, "invalid-commit"),
+        ({"commit": "a" * 40, "payload_schema": 1}, "schema-1"),
+        ({"commit": "a" * 40, "payload_schema": 3}, "schema-3"),
+    )
+    for manifest, name in cases:
+        case_root = tmp_path / name
+        case_root.mkdir()
+        prepare_release_preflight(case_root, manifest=manifest)
+
+        result = run_source_preflight(case_root)
+
+        assert result.returncode != 0, name
+        assert "payload_schema 2 is required" in result.stderr
+        assert "No system changes were made" in result.stderr
+
+
+def test_lite_release_preflight_rejects_incomplete_payloads(tmp_path):
+    cases = (
+        ("lite/Install-Lite.sh", "Lite runtime"),
+        ("updater", "updater"),
+        ("Check-Lite.sh", "Check-Lite.sh"),
+        ("frontend/dist/index.html", "frontend build"),
+    )
+    for missing, label in cases:
+        case_root = tmp_path / missing.replace("/", "-")
+        case_root.mkdir()
+        prepare_release_preflight(case_root, missing=(missing,))
+
+        result = run_source_preflight(case_root)
+
+        assert result.returncode != 0, label
+        assert "No system changes were made" in result.stderr
+
+
+def test_lite_release_preflight_requires_dedicated_checksum_asset(tmp_path):
+    prepare_release_preflight(tmp_path, checksum=False)
+
+    result = run_source_preflight(tmp_path)
+
+    assert result.returncode != 0
+    assert "V-Link.zip.sha256" in result.stderr
+    assert "No system changes were made" in result.stderr
+
+
+def test_branch_and_local_pre_lite_sources_fail_preflight(tmp_path):
+    fixtures = tmp_path / "fixtures"
+    fixtures.mkdir()
+    incomplete = tmp_path / "pre-lite"
+    incomplete.mkdir()
+    (incomplete / "V-Link.py").write_text("pre-Lite\n")
+    (fixtures / "ref.json").write_text(json.dumps({"sha": "a" * 40}))
+    with tarfile.open(fixtures / "source.tar.gz", "w:gz") as bundle:
+        bundle.add(incomplete, arcname="v-link-old")
+    (fixtures / "release.json").write_text(json.dumps({"assets": []}))
+
+    branch = run_source_preflight(tmp_path, source_ref="old-branch")
+    assert branch.returncode != 0
+    assert "required Lite runtime files" in branch.stderr
+    assert "No system changes were made" in branch.stderr
+
+    shutil.rmtree(tmp_path / "bin")
+    shutil.rmtree(tmp_path / "preflight")
+    local = run_source_preflight(tmp_path, source_dir=incomplete)
+    assert local.returncode != 0
+    assert "required Lite runtime files" in local.stderr
+    assert "No system changes were made" in local.stderr
+
+
+def test_source_preflight_precedes_apt_and_staging_is_not_downloaded_again():
+    source = INSTALL.read_text()
+    call = source.index("\npreflight_source\n")
+    apt = source.index("\napt-get update\n")
+    phase_three = source.split('show_phase 3 7 "V-Link source"', 1)[1].split(
+        'show_phase 4 7 "Frontend"', 1)[0]
+
+    assert call < apt
+    assert "curl " not in phase_three
+    assert "extract_safe" not in phase_three
+    assert 'SOURCE_DIR="$TEMP_DIR/source"' not in phase_three
+    assert "Using the Lite-compatible source validated" in phase_three
+
+
 def app_transaction_functions():
     source = INSTALL.read_text()
     functions = source.split("restore_app_path() {", 1)[1].split(
@@ -782,10 +992,10 @@ def test_repository_option_and_all_v_link_github_operations_use_selected_repo():
     assert "REPOSITORY_EXPLICIT=true" in parser
     assert 'validate_repository "$REPOSITORY"' in source
     assert "https://api.github.com/repos/$REPOSITORY/branches?per_page=100" in source
-    assert "https://api.github.com/repos/$REPOSITORY/commits/$ENCODED_REF" in source
+    assert "https://api.github.com/repos/$REPOSITORY/commits/$encoded_ref" in source
     assert source.count(
-        "https://api.github.com/repos/$REPOSITORY/releases/latest") == 2
-    assert '"https://github.com/$REPOSITORY.git"' in source
+        "https://api.github.com/repos/$REPOSITORY/releases/latest") == 1
+    assert '"https://github.com/$REPOSITORY/archive/$source_sha.tar.gz"' in source
     for fixed_url in (
             "api.github.com/repos/PabloMartin97/v-link",
             "api.github.com/repos/BoostedMoose/v-link",
@@ -826,14 +1036,17 @@ def test_release_is_reachable_without_ref_and_local_source_stays_explicit():
     source = INSTALL.read_text()
     decisions = source.split('if [[ "$ASSUME_YES" != true ]]; then', 1)[1].split(
         '[[ -z "$LIN_PORT" || "$CONFIGURE_HARDWARE" == true ]]', 1)[0]
-    release_download = source.split('show_phase 3 7 "V-Link source"', 1)[1].split(
-        'SOURCE_DIR="$(realpath -e "$SOURCE_DIR")"', 1)[0]
+    preflight = source.split("preflight_source() {", 1)[1].split(
+        "\nvalidate_v_link_imports() {", 1)[0]
     assert "current published release lacks the Lite installation payload" not in source
     assert 'SOURCE_DIR="$LOCAL_SOURCE_CANDIDATE"' not in decisions
-    assert 'elif [[ -z "$SOURCE_DIR" ]]; then' in release_download
-    assert "https://api.github.com/repos/$REPOSITORY/releases/latest" in release_download
-    assert 'if [[ -n "$SOURCE_DIR" ]]; then' in source
-    assert 'SOURCE_DIR="$(realpath -e "$SOURCE_DIR")"' in source
+    assert 'if [[ -n "$SOURCE_DIR" ]]; then' in preflight
+    assert "https://api.github.com/repos/$REPOSITORY/releases/latest" in preflight
+    assert 'SOURCE_DIR="$(realpath "$SOURCE_DIR")"' in preflight
+    source_phase = source.split('show_phase 3 7 "V-Link source"', 1)[1].split(
+        'show_phase 4 7 "Frontend"', 1)[0]
+    assert "curl " not in source_phase
+    assert "validated before system package installation" in source_phase
 
 
 def test_interactive_flow_keeps_repository_source_and_hardware_independent():

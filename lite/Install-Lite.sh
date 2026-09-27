@@ -936,6 +936,232 @@ validate_source() {
     fi
 }
 
+lite_source_incompatible() {
+    local reason="$1"
+    cat >&2 <<EOF
+
+[V-Link Lite] ERROR:
+The selected V-Link source predates Lite support or does not contain a complete
+Lite payload: $reason
+
+No system changes were made.
+
+Choose a newer Lite-compatible release or install a development branch.
+EOF
+    exit 1
+}
+
+validate_lite_release_manifest() {
+    local manifest="$1/.vlink-release.json"
+
+    python3 - "$manifest" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit("missing or invalid .vlink-release.json")
+
+if not isinstance(manifest, dict):
+    raise SystemExit(".vlink-release.json must contain a JSON object")
+if manifest.get("payload_schema") != 2 or isinstance(manifest.get("payload_schema"), bool):
+    raise SystemExit(".vlink-release.json must declare payload_schema 2")
+commit = manifest.get("commit")
+if not isinstance(commit, str) or re.fullmatch(r"[0-9a-fA-F]{40}", commit) is None:
+    raise SystemExit(".vlink-release.json must contain a 40-character Git commit SHA")
+PY
+}
+
+verify_release_checksum() {
+    python3 - "$1" "$2" <<'PY'
+import hashlib
+import re
+import sys
+from pathlib import Path
+
+archive = Path(sys.argv[1])
+checksum = Path(sys.argv[2])
+try:
+    lines = [line.strip() for line in checksum.read_text(encoding="utf-8").splitlines()
+             if line.strip()]
+except (OSError, UnicodeError) as error:
+    raise SystemExit(f"cannot read release checksum: {error}")
+if len(lines) != 1:
+    raise SystemExit("release checksum must contain exactly one V-Link.zip entry")
+match = re.fullmatch(r"([0-9a-fA-F]{64})[ \t]+[ *]?V-Link\.zip", lines[0])
+if match is None:
+    raise SystemExit("release checksum does not describe V-Link.zip")
+hasher = hashlib.sha256()
+with archive.open("rb") as source:
+    while chunk := source.read(1024 * 1024):
+        hasher.update(chunk)
+digest = hasher.hexdigest()
+if digest.lower() != match.group(1).lower():
+    raise SystemExit("V-Link.zip checksum mismatch")
+PY
+}
+
+extract_safe_release_zip() {
+    python3 - "$1" "$2" <<'PY'
+import stat
+import sys
+import zipfile
+from pathlib import Path, PurePosixPath
+
+archive = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+try:
+    with zipfile.ZipFile(archive) as bundle:
+        seen = set()
+        for member in bundle.infolist():
+            path = PurePosixPath(member.filename)
+            mode = member.external_attr >> 16
+            kind = stat.S_IFMT(mode)
+            if (not member.filename or path.is_absolute() or ".." in path.parts
+                    or member.filename in seen or stat.S_ISLNK(mode)
+                    or kind not in (0, stat.S_IFREG, stat.S_IFDIR)):
+                raise ValueError(f"unsafe ZIP entry: {member.filename!r}")
+            seen.add(member.filename)
+        bundle.extractall(destination)
+except (OSError, ValueError, zipfile.BadZipFile) as error:
+    raise SystemExit(f"invalid release archive: {error}")
+PY
+}
+
+extract_safe_source_tar() {
+    python3 - "$1" "$2" <<'PY'
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
+
+archive = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+try:
+    with tarfile.open(archive, "r:gz") as bundle:
+        members = bundle.getmembers()
+        roots = set()
+        safe = []
+        for member in members:
+            path = PurePosixPath(member.name)
+            if (not member.name or path.is_absolute() or ".." in path.parts
+                    or member.issym() or member.islnk() or member.isdev()
+                    or member.isfifo()):
+                raise ValueError(f"unsafe source archive entry: {member.name!r}")
+            roots.add(path.parts[0])
+            if len(path.parts) > 1:
+                member.name = str(PurePosixPath(*path.parts[1:]))
+                safe.append(member)
+        if len(roots) != 1:
+            raise ValueError("source archive does not have one root directory")
+        bundle.extractall(destination, members=safe)
+except (OSError, ValueError, tarfile.TarError) as error:
+    raise SystemExit(f"invalid source archive: {error}")
+PY
+}
+
+preflight_source() {
+    local release_json encoded_ref ref_json source_sha
+    local release_asset_urls release_url checksum_url
+
+    if [[ -n "$SOURCE_DIR" ]]; then
+        SOURCE_DIR="$(realpath "$SOURCE_DIR")"
+    else
+        command -v curl >/dev/null 2>&1 || \
+            die "curl is required to validate the selected source before installation"
+        command -v python3 >/dev/null 2>&1 || \
+            die "python3 is required to validate the selected source before installation"
+        TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
+        install -d "$TEMP_DIR/source"
+
+        if [[ -n "$SOURCE_REF" ]]; then
+            log "Downloading source ref '$SOURCE_REF' from $REPOSITORY for Lite preflight"
+            encoded_ref="$(python3 - "$SOURCE_REF" <<'PY'
+import sys
+import urllib.parse
+print(urllib.parse.quote(sys.argv[1], safe=""))
+PY
+)"
+            ref_json="$TEMP_DIR/ref.json"
+            curl --fail --silent --show-error --location --retry 3 \
+                --connect-timeout 10 --max-time 60 --speed-limit 128 --speed-time 30 \
+                "https://api.github.com/repos/$REPOSITORY/commits/$encoded_ref" \
+                --output "$ref_json" || die "GitHub ref '$SOURCE_REF' does not exist or is not reachable"
+            source_sha="$(python3 - "$ref_json" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    sha = json.load(source).get("sha", "")
+if re.fullmatch(r"[0-9a-fA-F]{40}", sha) is None:
+    raise SystemExit("GitHub returned an invalid commit SHA")
+print(sha.lower())
+PY
+)" || die "could not resolve GitHub ref '$SOURCE_REF'"
+            curl --fail --show-error --location --retry 3 --connect-timeout 10 \
+                --max-time 900 --speed-limit 1024 --speed-time 30 \
+                "https://github.com/$REPOSITORY/archive/$source_sha.tar.gz" \
+                --output "$TEMP_DIR/source.tar.gz" || die "could not download GitHub ref '$SOURCE_REF'"
+            extract_safe_source_tar "$TEMP_DIR/source.tar.gz" "$TEMP_DIR/source" || \
+                lite_source_incompatible "the selected branch/tag archive is unsafe"
+        else
+            log "Downloading the latest V-Link release from $REPOSITORY for Lite preflight"
+            release_json="$TEMP_DIR/release.json"
+            curl --fail --silent --show-error --location --retry 3 \
+                --connect-timeout 10 --max-time 60 --speed-limit 128 --speed-time 30 \
+                "https://api.github.com/repos/$REPOSITORY/releases/latest" \
+                --output "$release_json" || die "no published V-Link release is reachable"
+            release_asset_urls="$(python3 - "$release_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as release_file:
+    release = json.load(release_file)
+for name in ("V-Link.zip", "V-Link.zip.sha256"):
+    for asset in release.get("assets", []):
+        if asset.get("name") == name and asset.get("browser_download_url"):
+            print(asset["browser_download_url"])
+            break
+PY
+)"
+            release_url="$(sed -n '1p' <<<"$release_asset_urls")"
+            checksum_url="$(sed -n '2p' <<<"$release_asset_urls")"
+            [[ -n "$release_url" && -n "$checksum_url" ]] && \
+                [[ -z "$(sed -n '3p' <<<"$release_asset_urls")" ]] || \
+                lite_source_incompatible "the release is missing V-Link.zip or V-Link.zip.sha256"
+            curl --fail --show-error --location --retry 3 --connect-timeout 10 \
+                --max-time 900 --speed-limit 1024 --speed-time 30 \
+                "$release_url" --output "$TEMP_DIR/V-Link.zip" || \
+                die "could not download V-Link.zip"
+            curl --fail --show-error --location --retry 3 --connect-timeout 10 \
+                --max-time 120 --speed-limit 32 --speed-time 30 \
+                "$checksum_url" --output "$TEMP_DIR/V-Link.zip.sha256" || \
+                die "could not download V-Link.zip.sha256"
+            verify_release_checksum "$TEMP_DIR/V-Link.zip" "$TEMP_DIR/V-Link.zip.sha256" || \
+                lite_source_incompatible "the dedicated release checksum is invalid"
+            extract_safe_release_zip "$TEMP_DIR/V-Link.zip" "$TEMP_DIR/source" || \
+                lite_source_incompatible "the release ZIP is invalid or unsafe"
+            validate_lite_release_manifest "$TEMP_DIR/source" || \
+                lite_source_incompatible "a valid .vlink-release.json with payload_schema 2 is required"
+            [[ -f "$TEMP_DIR/source/Check-Lite.sh" ]] || \
+                lite_source_incompatible "the release is missing Check-Lite.sh"
+            [[ -f "$TEMP_DIR/source/frontend/dist/index.html" ]] || \
+                lite_source_incompatible "the release is missing frontend/dist/index.html"
+        fi
+        SOURCE_DIR="$TEMP_DIR/source"
+    fi
+
+    SOURCE_DIR="$(realpath "$SOURCE_DIR")"
+    if ! (validate_source "$SOURCE_DIR"); then
+        lite_source_incompatible "required Lite runtime files are missing or invalid"
+    fi
+    log "Lite-compatible source validated before system installation"
+}
+
 validate_v_link_imports() {
     runuser -u "$TARGET_USER" -- sh -c \
         'cd "$1" && exec "$2" "$1/V-Link.py" --help' \
@@ -1191,23 +1417,22 @@ fi
 [[ -z "$LIN_PORT" || "$CONFIGURE_HARDWARE" == true ]] || \
     die "--lin-port requires hardware mode"
 
-if [[ -n "$SOURCE_DIR" ]]; then
-    SOURCE_DIR="$(realpath -e "$SOURCE_DIR")"
-    validate_source "$SOURCE_DIR"
-    if [[ "$SOURCE_DIR" == "$(realpath -m "$APP_DIR")" ]]; then
-        APP_DIR="$TARGET_HOME/v-link-runtime"
-        log "Keeping the source checkout intact; the kiosk runtime will be installed at $APP_DIR"
-    fi
-    if [[ ! -f "$SOURCE_DIR/frontend/dist/index.html" ]]; then
+preflight_source
+
+if [[ "$SOURCE_DIR" == "$(realpath -m "$APP_DIR")" ]]; then
+    APP_DIR="$TARGET_HOME/v-link-runtime"
+    log "Keeping the source checkout intact; the kiosk runtime will be installed at $APP_DIR"
+fi
+if [[ ! -f "$SOURCE_DIR/frontend/dist/index.html" ]]; then
+    FRONTEND_BUILD_REQUIRED=true
+elif [[ -f "$SOURCE_DIR/frontend/package.json" ]]; then
+    FRONTEND_SOURCE_HASH="$(frontend_source_hash "$SOURCE_DIR")"
+    if [[ ! -f "$SOURCE_DIR/frontend/dist/.v-link-source.sha256" ]] || \
+       [[ "$(<"$SOURCE_DIR/frontend/dist/.v-link-source.sha256")" != "$FRONTEND_SOURCE_HASH" ]]; then
         FRONTEND_BUILD_REQUIRED=true
-    elif [[ -f "$SOURCE_DIR/frontend/package.json" ]]; then
-        FRONTEND_SOURCE_HASH="$(frontend_source_hash "$SOURCE_DIR")"
-        if [[ ! -f "$SOURCE_DIR/frontend/dist/.v-link-source.sha256" ]] || \
-           [[ "$(<"$SOURCE_DIR/frontend/dist/.v-link-source.sha256")" != "$FRONTEND_SOURCE_HASH" ]]; then
-            FRONTEND_BUILD_REQUIRED=true
-        fi
     fi
-elif [[ -n "$SOURCE_REF" ]]; then
+fi
+if [[ -n "$SOURCE_REF" ]]; then
     FRONTEND_BUILD_REQUIRED=true
 fi
 
@@ -1241,44 +1466,6 @@ for storage_path in / "$TARGET_HOME"; do
         die "not enough free space on $storage_path (need at least $((REQUIRED_FREE_KB / 1024)) MiB)"
     fi
 done
-
-# Fail fast on a typo or an unpublished release before spending time in APT.
-if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-    if [[ -n "$SOURCE_REF" ]]; then
-        log "Checking that GitHub ref '$SOURCE_REF' exists"
-        ENCODED_REF="$(python3 - "$SOURCE_REF" <<'PY'
-import sys
-import urllib.parse
-print(urllib.parse.quote(sys.argv[1], safe=''))
-PY
-)"
-        curl --fail --silent --show-error --location --retry 2 \
-            --connect-timeout 10 --max-time 60 --speed-limit 128 --speed-time 30 \
-            "https://api.github.com/repos/$REPOSITORY/commits/$ENCODED_REF" \
-            --output /dev/null || die "GitHub ref '$SOURCE_REF' does not exist or is not reachable"
-    elif [[ -z "$SOURCE_DIR" ]]; then
-        log "Checking the latest GitHub release assets"
-        TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
-        RELEASE_JSON="$TEMP_DIR/release.json"
-        curl --fail --silent --show-error --location --retry 2 \
-            --connect-timeout 10 --max-time 60 --speed-limit 128 --speed-time 30 \
-            "https://api.github.com/repos/$REPOSITORY/releases/latest" \
-            --output "$RELEASE_JSON" || die "no published V-Link release is reachable"
-        python3 - "$RELEASE_JSON" <<'PY' || exit 1
-import json
-import sys
-
-with open(sys.argv[1], encoding='utf-8') as release_file:
-    assets = {asset.get('name') for asset in json.load(release_file).get('assets', [])}
-missing = {'V-Link.zip', 'V-Link.zip.sha256'} - assets
-if missing:
-    print(f"[V-Link Lite] ERROR: latest release is missing: {', '.join(sorted(missing))}", file=sys.stderr)
-    raise SystemExit(1)
-PY
-    fi
-else
-    log "Remote preflight skipped because curl or python3 is unavailable; APT will install it"
-fi
 
 show_phase 2 7 "System packages"
 log "Installing the minimal Wayland, browser, audio and runtime packages"
@@ -1319,63 +1506,7 @@ if [[ "$FRONTEND_BUILD_REQUIRED" == true ]]; then
 fi
 
 show_phase 3 7 "V-Link source"
-
-if [[ -n "$SOURCE_REF" ]]; then
-    log "Downloading source ref '$SOURCE_REF' from $REPOSITORY"
-    TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
-    chown "$TARGET_USER:$TARGET_GROUP" "$TEMP_DIR"
-    runuser -u "$TARGET_USER" -- git \
-        -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30 \
-        clone --depth 1 --branch "$SOURCE_REF" \
-        "https://github.com/$REPOSITORY.git" "$TEMP_DIR/source"
-    SOURCE_DIR="$TEMP_DIR/source"
-elif [[ -z "$SOURCE_DIR" ]]; then
-    log "Downloading the latest V-Link release from $REPOSITORY"
-    if [[ -z "$TEMP_DIR" ]]; then
-        TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
-    fi
-    RELEASE_JSON="$TEMP_DIR/release.json"
-    if [[ ! -s "$RELEASE_JSON" ]]; then
-        curl --fail --silent --show-error --location --retry 3 \
-            --connect-timeout 10 --max-time 60 --speed-limit 128 --speed-time 30 \
-            "https://api.github.com/repos/$REPOSITORY/releases/latest" \
-            --output "$RELEASE_JSON"
-    fi
-    mapfile -t RELEASE_ASSET_URLS < <(python3 - "$RELEASE_JSON" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as release_file:
-    release = json.load(release_file)
-
-assets = {asset.get('name'): asset.get('browser_download_url') for asset in release.get('assets', [])}
-for name in ('V-Link.zip', 'V-Link.zip.sha256'):
-    if assets.get(name):
-        print(assets[name])
-PY
-)
-    [[ "${#RELEASE_ASSET_URLS[@]}" -eq 2 ]] || \
-        die "latest GitHub release does not contain V-Link.zip and its checksum"
-    RELEASE_URL="${RELEASE_ASSET_URLS[0]}"
-    CHECKSUM_URL="${RELEASE_ASSET_URLS[1]}"
-    curl --fail --show-error --location --retry 3 --connect-timeout 10 \
-        --max-time 900 --speed-limit 1024 --speed-time 30 \
-        "$RELEASE_URL" --output "$TEMP_DIR/V-Link.zip"
-    curl --fail --show-error --location --retry 3 --connect-timeout 10 \
-        --max-time 120 --speed-limit 32 --speed-time 30 \
-        "$CHECKSUM_URL" --output "$TEMP_DIR/V-Link.zip.sha256"
-    (cd "$TEMP_DIR" && sha256sum --check V-Link.zip.sha256)
-    ZIP_ENTRIES="$(unzip -Z1 "$TEMP_DIR/V-Link.zip")"
-    if grep -Eq '(^/|(^|/)\.\.(/|$))' <<<"$ZIP_ENTRIES"; then
-        die "release archive contains an unsafe path"
-    fi
-    install -d "$TEMP_DIR/source"
-    unzip -q "$TEMP_DIR/V-Link.zip" -d "$TEMP_DIR/source"
-    SOURCE_DIR="$TEMP_DIR/source"
-fi
-
-SOURCE_DIR="$(realpath -e "$SOURCE_DIR")"
-validate_source "$SOURCE_DIR"
+log "Using the Lite-compatible source validated before system package installation"
 
 show_phase 4 7 "Frontend"
 
