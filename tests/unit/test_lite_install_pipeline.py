@@ -450,7 +450,8 @@ def make_minimal_lite_source(root):
         "updater/__init__.py", "updater/releases.py", "updater/keepalive.py",
         "resources/dtoverlays/v-link.dtbo",
         "resources/dtoverlays/mcp2515-can1.dtbo",
-        "resources/dtoverlays/mcp2515-can2.dtbo", "lite/Check-Lite.sh",
+        "resources/dtoverlays/mcp2515-can2.dtbo", "lite/Install-Lite.sh",
+        "lite/Check-Lite.sh",
         "lite/runtime/V-Link-Lite-Boot.sh",
         "lite/runtime/V-Link-Lite-Overlay.py",
         "lite/splash/V-Link-Lite-Prepare-Splash.py",
@@ -545,6 +546,58 @@ def test_lite_runtime_installs_updater_as_a_transactional_directory():
         assert not Path(str(destination) + ".v-link-old").exists()
 
 
+def test_lite_runtime_installs_lite_source_as_a_transactional_directory():
+    install = INSTALL.read_text()
+    runtime = install.split('log "Installing V-Link application files"', 1)[1].split(
+        'log "Creating the Python virtual environment"', 1)[0]
+    assert 'replace_app_directory "$SOURCE_DIR/lite" "$APP_DIR/lite"' in runtime
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        source = root / "source/lite"
+        destination = root / "app/lite"
+        source.mkdir(parents=True)
+        destination.mkdir(parents=True)
+        (source / "Install-Lite.sh").write_text("new installer\n")
+        (source / "Check-Lite.sh").write_text("new check\n")
+        (destination / "Install-Lite.sh").write_text("old installer\n")
+        script = (
+            "set -Eeuo pipefail\n" + app_transaction_functions() + "\n"
+            "APP_CHANGED_PATHS=()\nAPP_TRANSACTION=true\n"
+            'replace_app_directory "$1" "$2"\ncommit_app_transaction\n')
+        result = subprocess.run(
+            ["bash", "-c", script, "bash", str(source), str(destination)],
+            text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert (destination / "Install-Lite.sh").read_text() == "new installer\n"
+        assert (destination / "Check-Lite.sh").read_text() == "new check\n"
+        assert not Path(str(destination) + ".v-link-old").exists()
+
+
+def test_lite_runtime_rolls_back_lite_source_after_later_failure():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        source = root / "source/lite"
+        destination = root / "app/lite"
+        source.mkdir(parents=True)
+        destination.mkdir(parents=True)
+        (source / "Install-Lite.sh").write_text("incomplete new installer\n")
+        (destination / "Install-Lite.sh").write_text("known good installer\n")
+        script = (
+            "set -Eeuo pipefail\n" + app_transaction_functions() + "\n"
+            "APP_CHANGED_PATHS=()\nAPP_TRANSACTION=true\n"
+            'replace_app_directory "$1" "$2"\n'
+            'for ((index=${#APP_CHANGED_PATHS[@]} - 1; index >= 0; index--)); do\n'
+            '  restore_app_path "${APP_CHANGED_PATHS[index]}"\n'
+            "done\n")
+        result = subprocess.run(
+            ["bash", "-c", script, "bash", str(source), str(destination)],
+            text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert (destination / "Install-Lite.sh").read_text() == "known good installer\n"
+        assert not Path(str(destination) + ".v-link-old").exists()
+
+
 def recovery_helper_source():
     source = INSTALL.read_text()
     marker = 'cat >"$TARGET_HOME/.local/libexec/v-link-recover-update" <<\'EOF\'\n'
@@ -553,7 +606,7 @@ def recovery_helper_source():
 
 def test_interrupted_update_recovery_restores_updater_directory():
     helper_source = recovery_helper_source()
-    assert "V-Link.py backend frontend updater resources" in helper_source
+    assert "V-Link.py backend frontend updater lite resources" in helper_source
 
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -579,11 +632,56 @@ def test_interrupted_update_recovery_restores_updater_directory():
         assert not transaction.exists()
 
 
+def test_interrupted_update_recovery_restores_lite_directory():
+    helper_source = recovery_helper_source()
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        app = root / "v-link"
+        transaction = root / ".v-link-update.test"
+        backup = transaction / "backup/lite"
+        (app / "lite").mkdir(parents=True)
+        backup.mkdir(parents=True)
+        (app / "lite/Install-Lite.sh").write_text("incomplete update\n")
+        (backup / "Install-Lite.sh").write_text("known good\n")
+        (root / ".v-link-update-active").write_text(f"{transaction}\n{app}\n")
+        helper = root / "recover"
+        helper.write_text(helper_source)
+        helper.chmod(0o755)
+
+        result = subprocess.run(
+            ["bash", str(helper), "--lock-held", str(app)], text=True,
+            capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert (app / "lite/Install-Lite.sh").read_text() == "known good\n"
+        assert not (root / ".v-link-update-active").exists()
+        assert not transaction.exists()
+
+
 def test_lite_health_check_requires_complete_updater_package():
     check = CHECK.read_text()
     application = check.split("printf '\\nApplication\\n'", 1)[1]
     for relative in ("__init__.py", "releases.py", "keepalive.py"):
         assert f'"$APP_DIR/updater/{relative}"' in application
+
+
+def test_lite_health_check_requires_versioned_lite_source():
+    check = CHECK.read_text()
+    application = check.split("printf '\\nApplication\\n'", 1)[1]
+    for relative in ("Install-Lite.sh", "Check-Lite.sh"):
+        assert f'"$APP_DIR/lite/{relative}"' in application
+
+
+def test_runtime_resources_scope_is_only_device_tree_overlays():
+    installer = INSTALL.read_text()
+    package = (ROOT / "Package.sh").read_text()
+    updater = (ROOT / "updater/releases.py").read_text()
+
+    assert 'replace_app_directory "$SOURCE_DIR/resources/dtoverlays" "$APP_DIR/resources/dtoverlays"' in installer
+    assert 'cp -a resources/dtoverlays/. "$STAGE/package/resources/dtoverlays/"' in package
+    assert '"resources/dtoverlays"' in updater
+    assert 'replace_app_directory "$SOURCE_DIR/resources" "$APP_DIR/resources"' not in installer
+    assert 'cp -a resources/. "$STAGE/package/resources/"' not in package
 
 
 def test_lite_health_check_requires_critical_runtime_scripts_to_be_executable():

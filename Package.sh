@@ -30,7 +30,7 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p \
     "$STAGE/package/frontend" \
     "$STAGE/package/frontend/public/assets/svg/logos" \
-    "$STAGE/package/resources" \
+    "$STAGE/package/resources/dtoverlays" \
     "$STAGE/assets"
 
 cp -a frontend/dist "$STAGE/package/frontend/dist"
@@ -47,7 +47,7 @@ cp -a updater "$STAGE/package/updater"
 # Lite installer/runtime files and hardware overlays are also part of the
 # release archive so Raspberry Pi OS Lite can install from a stable release.
 cp -a lite "$STAGE/package/lite"
-cp -a resources/. "$STAGE/package/resources/"
+cp -a resources/dtoverlays/. "$STAGE/package/resources/dtoverlays/"
 
 cp V-Link.py requirements.txt Update.sh "$STAGE/package/"
 cp lite/Check-Lite.sh "$STAGE/package/Check-Lite.sh"

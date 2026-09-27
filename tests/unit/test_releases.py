@@ -43,13 +43,16 @@ def test_prerelease_branch_marker_overrides_default_branch():
     assert releases._summary(item)["branch"] == "factory-screen"
 
 
-def make_archive(path, commit=SHA):
+def make_archive(path, commit=SHA, *, manifest=True):
     with zipfile.ZipFile(path, "w") as bundle:
         bundle.writestr("V-Link.py", "new app")
         bundle.writestr("requirements.txt", "")
         bundle.writestr("backend/version.py", 'VERSION = "new"')
         bundle.writestr("frontend/dist/index.html", "new frontend")
-        bundle.writestr(".vlink-release.json", json.dumps({"commit": commit}))
+        if manifest is True:
+            manifest = {"commit": commit}
+        if manifest is not None:
+            bundle.writestr(".vlink-release.json", json.dumps(manifest))
 
 
 def make_modern_archive(path, commit=SHA, *, patch=False, omit=(), schema=2):
@@ -133,6 +136,11 @@ def test_package_script_builds_complete_modern_zip(tmp_path):
                 "lite/Install-Lite.sh", "lite/Check-Lite.sh",
                 "resources/dtoverlays/v-link.dtbo"):
             assert name in names
+        assert all(
+            name in {"resources/", "resources/dtoverlays/"}
+            or name.startswith("resources/dtoverlays/")
+            for name in names if name.startswith("resources/"))
+        assert "resources/media/banner.jpg" not in names
         manifest = json.loads(bundle.read(".vlink-release.json"))
         assert manifest["payload_schema"] == releases.PAYLOAD_SCHEMA
         assert bundle.read("Check-Lite.sh") == bundle.read("lite/Check-Lite.sh")
@@ -162,7 +170,7 @@ def test_install_stages_and_preserves_updater_for_older_release(tmp_path, monkey
     (app / "resources/existing.txt").write_text("resources survive")
     (app / "Check-Lite.sh").write_text("Lite check survives")
     archive = tmp_path / "release.zip"
-    make_archive(archive)
+    make_archive(archive, manifest=None)
     mock_release_download(monkeypatch, archive)
 
     result = releases.install(2, app)
@@ -306,10 +314,10 @@ def test_incomplete_modern_payload_is_rejected_before_pip_or_app_swap(
 
 def test_payload_schema_distinguishes_legacy_modern_and_unknown(tmp_path):
     legacy = tmp_path / "legacy.zip"
-    make_archive(legacy)
+    make_archive(legacy, manifest=None)
     legacy_stage = tmp_path / "legacy"
     legacy_stage.mkdir()
-    assert "payload_schema" not in releases._extract(legacy, legacy_stage)
+    assert releases._extract(legacy, legacy_stage) is None
 
     modern = tmp_path / "modern.zip"
     make_modern_archive(modern)
@@ -323,6 +331,36 @@ def test_payload_schema_distinguishes_legacy_modern_and_unknown(tmp_path):
     future_stage.mkdir()
     with pytest.raises(releases.UpdateError, match="Unsupported release payload schema"):
         releases._extract(future, future_stage)
+
+
+def test_valid_legacy_manifest_is_checked_against_release_tag(tmp_path, monkeypatch):
+    app = tmp_path / "app"
+    app.mkdir()
+    archive = tmp_path / "legacy-with-manifest.zip"
+    make_archive(archive, SHA.upper())
+    mock_release_download(monkeypatch, archive)
+
+    result = releases.install(2, app)
+
+    assert result["commit"] == SHA
+
+
+@pytest.mark.parametrize("manifest", [
+    {},
+    {"payload_schema": releases.PAYLOAD_SCHEMA},
+    {"commit": "abc"},
+    {"commit": "not-a-sha"},
+    {"commit": "a" * 39},
+    {"commit": "a" * 41},
+])
+def test_present_manifest_requires_valid_commit_sha(tmp_path, manifest):
+    archive = tmp_path / "invalid-manifest.zip"
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    make_archive(archive, manifest=manifest)
+
+    with pytest.raises(releases.UpdateError, match="invalid commit manifest"):
+        releases._extract(archive, stage)
 
 
 def test_modern_release_without_patch_removes_previous_patch(tmp_path, monkeypatch):
@@ -416,7 +454,7 @@ def test_modern_swap_failure_restores_all_previous_versioned_components(
     real_replace = releases.os.replace
 
     def fail_resources(source, destination):
-        if source == stage / "resources":
+        if source == stage / "resources/dtoverlays":
             raise OSError("simulated resources swap error")
         return real_replace(source, destination)
 

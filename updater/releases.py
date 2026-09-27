@@ -22,8 +22,9 @@ API = f"https://api.github.com/repos/{REPOSITORY}"
 ASSET_NAME = "V-Link.zip"
 MANIFEST = ".vlink-release.json"
 PAYLOAD_SCHEMA = 2
-MANAGED = ("V-Link.py", "backend", "frontend", "updater", "lite", "resources",
-           "requirements.txt", "Update.sh", "Patch.sh", "Check-Lite.sh", MANIFEST)
+MANAGED = ("V-Link.py", "backend", "frontend", "updater", "lite",
+           "resources/dtoverlays", "requirements.txt", "Update.sh", "Patch.sh",
+           "Check-Lite.sh", MANIFEST)
 CORE_REQUIRED = ("frontend/dist/index.html", "backend/version.py", "V-Link.py",
                  "requirements.txt")
 UPDATER_REQUIRED = ("updater/__init__.py", "updater/releases.py", "updater/keepalive.py",
@@ -209,7 +210,7 @@ def _validate_payload(stage):
         raise UpdateError(
             f"Release archive is missing required app files: {', '.join(missing_core)}")
 
-    manifest = {}
+    manifest = None
     manifest_path = stage / MANIFEST
     if manifest_path.exists():
         if not manifest_path.is_file():
@@ -221,7 +222,12 @@ def _validate_payload(stage):
         if not isinstance(manifest, dict):
             raise UpdateError("Release archive contains an invalid commit manifest")
 
-    schema = manifest.get("payload_schema")
+        commit = manifest.get("commit")
+        if not isinstance(commit, str) or re.fullmatch(r"[0-9a-fA-F]{40}", commit) is None:
+            raise UpdateError("Release archive contains an invalid commit manifest")
+        manifest["commit"] = commit.lower()
+
+    schema = manifest.get("payload_schema") if manifest is not None else None
     if schema is not None and (
             not isinstance(schema, int) or isinstance(schema, bool)
             or schema != PAYLOAD_SCHEMA):
@@ -259,7 +265,7 @@ def _managed_paths(stage, metadata):
     if (stage / "updater").is_dir() and (stage / "Update.sh").is_file():
         paths.extend(("updater", "Update.sh"))
     if (stage / "lite").is_dir() and (stage / "Check-Lite.sh").is_file():
-        paths.extend(("lite", "resources", "Check-Lite.sh"))
+        paths.extend(("lite", "resources/dtoverlays", "Check-Lite.sh"))
     return paths
 
 
@@ -274,10 +280,12 @@ def _replace(stage, app_dir, metadata):
     try:
         for name in paths:
             if (app_dir / name).exists():
+                (backup / name).parent.mkdir(parents=True, exist_ok=True)
                 os.replace(app_dir / name, backup / name)
                 moved_old.append(name)
         for name in paths:
             if (stage / name).exists():
+                (app_dir / name).parent.mkdir(parents=True, exist_ok=True)
                 os.replace(stage / name, app_dir / name)
                 moved_new.append(name)
     except OSError as error:
@@ -293,6 +301,7 @@ def _replace(stage, app_dir, metadata):
                 rollback_errors.append(rollback_error)
         for name in reversed(moved_old):
             try:
+                (app_dir / name).parent.mkdir(parents=True, exist_ok=True)
                 os.replace(backup / name, app_dir / name)
             except OSError as rollback_error:
                 rollback_errors.append(rollback_error)
@@ -333,12 +342,9 @@ def _install_locked(release_id, app_dir):
         _download(asset["browser_download_url"], archive, asset.get("digest"))
         print("Checking release archive...", flush=True)
         packaged_manifest = _extract(archive, stage)
-        if packaged_manifest:
-            try:
-                packaged_commit = packaged_manifest["commit"]
-            except KeyError as error:
-                raise UpdateError("Release archive contains an invalid commit manifest") from error
-            if packaged_commit != sha:
+        if packaged_manifest is not None:
+            packaged_commit = packaged_manifest["commit"]
+            if packaged_commit != sha.lower():
                 raise UpdateError("Release archive was built from a different commit than its tag")
             if packaged_manifest.get("payload_schema") == PAYLOAD_SCHEMA:
                 metadata["payload_schema"] = PAYLOAD_SCHEMA

@@ -910,6 +910,8 @@ validate_source() {
         updater/__init__.py \
         updater/releases.py \
         updater/keepalive.py \
+        lite/Install-Lite.sh \
+        lite/Check-Lite.sh \
         resources/dtoverlays/v-link.dtbo \
         resources/dtoverlays/mcp2515-can1.dtbo \
         resources/dtoverlays/mcp2515-can2.dtbo; do
@@ -1419,6 +1421,7 @@ else
     install_app_file "$SOURCE_DIR/requirements.txt" "$APP_DIR/requirements.txt" 0644
     replace_app_directory "$SOURCE_DIR/backend" "$APP_DIR/backend"
     replace_app_directory "$SOURCE_DIR/updater" "$APP_DIR/updater"
+    replace_app_directory "$SOURCE_DIR/lite" "$APP_DIR/lite"
     replace_app_directory "$SOURCE_DIR/frontend/dist" "$APP_DIR/frontend/dist"
     replace_app_directory "$SOURCE_DIR/resources/dtoverlays" "$APP_DIR/resources/dtoverlays"
     for optional_file in Update.sh Patch.sh; do
@@ -1455,6 +1458,8 @@ for required_path in \
     "$APP_DIR/updater/__init__.py" \
     "$APP_DIR/updater/releases.py" \
     "$APP_DIR/updater/keepalive.py" \
+    "$APP_DIR/lite/Install-Lite.sh" \
+    "$APP_DIR/lite/Check-Lite.sh" \
     "$APP_DIR/frontend/dist/index.html"; do
     [[ -e "$required_path" ]] || die "installed application is incomplete: missing $required_path"
 done
@@ -1715,7 +1720,7 @@ APP_DIR="$1"
 APP_PARENT="$(dirname -- "$APP_DIR")"
 MARKER="$APP_PARENT/.v-link-update-active"
 readonly -a APP_ITEMS=(
-    V-Link.py backend frontend updater resources requirements.txt Patch.sh Check-Lite.sh Update.sh venv
+    V-Link.py backend frontend updater lite resources requirements.txt Patch.sh Check-Lite.sh Update.sh venv
 )
 
 if [[ "$LOCK_HELD" != true ]]; then

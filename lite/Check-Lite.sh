@@ -672,6 +672,8 @@ for required_path in \
     "$APP_DIR/updater/__init__.py" \
     "$APP_DIR/updater/releases.py" \
     "$APP_DIR/updater/keepalive.py" \
+    "$APP_DIR/lite/Install-Lite.sh" \
+    "$APP_DIR/lite/Check-Lite.sh" \
     "$APP_DIR/frontend/dist/index.html" \
     "$APP_DIR/.v-link-lite-runtime" \
     "$APP_DIR/venv/bin/python" \
