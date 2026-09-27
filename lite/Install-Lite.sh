@@ -1077,7 +1077,8 @@ preflight_source() {
         command -v python3 >/dev/null 2>&1 || \
             die "python3 is required to validate the selected source before installation"
         TEMP_DIR="$(mktemp -d /tmp/v-link-lite.XXXXXX)"
-        install -d "$TEMP_DIR/source"
+        chmod 0711 "$TEMP_DIR"
+        install -d -m 0755 "$TEMP_DIR/source"
 
         if [[ -n "$SOURCE_REF" ]]; then
             log "Downloading source ref '$SOURCE_REF' from $REPOSITORY for Lite preflight"

@@ -690,7 +690,7 @@ esac
     mktemp = fake_bin / "mktemp"
     mktemp.write_text('''#!/bin/bash
 set -eu
-mkdir -p "$PREFLIGHT_TEMP"
+mkdir -p -m 0700 "$PREFLIGHT_TEMP"
 printf '%s\n' "$PREFLIGHT_TEMP"
 ''')
     mktemp.chmod(0o755)
@@ -766,6 +766,29 @@ def test_modern_lite_release_passes_preflight_and_keeps_staging(tmp_path):
     assert f"validated={tmp_path / 'preflight/source'}" in result.stdout
     assert f"staging={tmp_path / 'preflight'}" in result.stdout
     assert (tmp_path / "preflight/source/lite/Install-Lite.sh").is_file()
+
+
+def test_managed_branch_staging_allows_traversal_without_giving_away_source(tmp_path):
+    fixtures = tmp_path / "fixtures"
+    source = tmp_path / "branch-source"
+    fixtures.mkdir()
+    make_minimal_lite_source(source)
+    (source / "frontend/dist/index.html").unlink()
+    (source / "frontend/package.json").write_text("{}\n")
+    (fixtures / "ref.json").write_text(json.dumps({"sha": "a" * 40}))
+    with tarfile.open(fixtures / "source.tar.gz", "w:gz") as bundle:
+        bundle.add(source, arcname="v-link-branch")
+
+    result = run_source_preflight(tmp_path, source_ref="Lite-os-for-pr")
+
+    assert result.returncode == 0, result.stderr
+    staging = tmp_path / "preflight"
+    staged_source = staging / "source"
+    assert staging.stat().st_mode & 0o777 == 0o711
+    assert staged_source.stat().st_mode & 0o777 == 0o755
+    installer = INSTALL.read_text()
+    assert 'chown -R "$TARGET_USER:$TARGET_GROUP" "$SOURCE_DIR/frontend"' in installer
+    assert 'chown -R "$TARGET_USER:$TARGET_GROUP" "$TEMP_DIR"' not in installer
 
 
 def test_lite_release_preflight_rejects_missing_or_legacy_manifest(tmp_path):
