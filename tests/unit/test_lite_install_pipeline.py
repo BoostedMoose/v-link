@@ -598,7 +598,9 @@ def make_minimal_lite_source(root):
         "lite/lib/v_link_lite_support.py", "lite/lib/v_link_lite_audio.py",
         "lite/lib/v_link_lite_display.py", "lite/splash/Render-Lite-Splash.py",
         "frontend/public/assets/svg/logos/moose.svg",
-        "frontend/public/assets/svg/logos/vlink.svg", "frontend/dist/index.html",
+        "frontend/public/assets/svg/logos/vlink.svg",
+        "frontend/package.json",
+        "frontend/dist/index.html",
     )
     setup_modules = (
         "__init__.py", "ui.py", "navigation.py", "network.py", "audio.py",
@@ -883,6 +885,25 @@ def app_transaction_functions():
     functions = source.split("restore_app_path() {", 1)[1].split(
         "\non_error() {", 1)[0]
     return "restore_app_path() {" + functions
+
+def test_lite_runtime_installs_frontend_version_metadata():
+    install = INSTALL.read_text()
+
+    runtime = install.split(
+        'log "Installing V-Link application files"', 1
+    )[1].split(
+        'log "Creating the Python virtual environment"', 1
+    )[0]
+
+    assert (
+        'install_app_file \\\n'
+        '        "$SOURCE_DIR/frontend/package.json" \\\n'
+        '        "$APP_DIR/frontend/package.json" \\\n'
+        '        0644'
+    ) in runtime
+
+    assert '"$APP_DIR/frontend/package.json"' in runtime
+    assert '"$APP_DIR/frontend/dist/index.html"' in runtime
 
 
 def test_lite_runtime_installs_updater_as_a_transactional_directory():

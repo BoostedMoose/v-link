@@ -907,6 +907,7 @@ validate_source() {
     for required in \
         V-Link.py requirements.txt Update.sh \
         backend/server.py \
+        frontend/package.json \
         updater/__init__.py \
         updater/releases.py \
         updater/recovery.py \
@@ -1557,6 +1558,10 @@ else
     replace_app_directory "$SOURCE_DIR/updater" "$APP_DIR/updater"
     replace_app_directory "$SOURCE_DIR/lite" "$APP_DIR/lite"
     replace_app_directory "$SOURCE_DIR/frontend/dist" "$APP_DIR/frontend/dist"
+    install_app_file \
+        "$SOURCE_DIR/frontend/package.json" \
+        "$APP_DIR/frontend/package.json" \
+        0644
     replace_app_directory "$SOURCE_DIR/resources/dtoverlays" "$APP_DIR/resources/dtoverlays"
     for optional_file in Update.sh Patch.sh; do
         if [[ -f "$SOURCE_DIR/$optional_file" ]]; then
@@ -1586,6 +1591,7 @@ done
 for required_path in \
     "$APP_DIR/V-Link.py" \
     "$APP_DIR/requirements.txt" \
+    "$APP_DIR/frontend/package.json" \
     "$APP_DIR/Check-Lite.sh" \
     "$APP_DIR/Update.sh" \
     "$APP_DIR/backend/server.py" \
