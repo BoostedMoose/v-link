@@ -75,13 +75,12 @@ class APPThread(threading.Thread):
 
         if shared_state.isKiosk:
             mode = [
-                '--kiosk',
-                '--start-maximized'
+                '--kiosk'
             ]
         else:
+            window_width, window_height = shared_state.browserWindowSize
             mode = [
-                '--disable-resize',
-                '--window-size=1280,720'
+                f'--window-size={window_width},{window_height}'
             ]
 
         flags = standard_flags + mode

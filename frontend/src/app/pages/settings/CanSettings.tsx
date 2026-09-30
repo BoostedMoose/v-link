@@ -37,7 +37,9 @@ interface CanSignalSensor {
   enabled: boolean;
   can_id: string;
   byte_index: number;
-  bit_index: number;
+  bit_index?: number;
+  mask?: string | number;
+  shift?: number;
   invert?: boolean;
   scale?: string;
 }
@@ -419,7 +421,7 @@ const CanSettings = () => {
               <Th>INTERFACE</Th>
               <Th>CAN ID</Th>
               <Th>BYTE</Th>
-              <Th>BIT</Th>
+              <Th>FIELD</Th>
               <Th style={{ width: '1%' }}></Th>
             </tr>
           </thead>
@@ -430,7 +432,7 @@ const CanSettings = () => {
                 <Td>{signal.interface}</Td>
                 <Td>{signal.can_id}</Td>
                 <Td>{signal.byte_index}</Td>
-                <Td>{signal.bit_index}</Td>
+                <Td>{signal.mask != null ? `${signal.mask} >> ${signal.shift ?? 0}` : signal.bit_index}</Td>
                 <TdControl>
                   <ToggleSwitch
                     backgroundColor={theme.colors.medium}

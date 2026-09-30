@@ -16,11 +16,16 @@ const Simple = lazy(() => import('./simple/Simple'));
 const DashBoard = styled.div`
   height: 100%;
   width: 100%;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   overflow: hidden;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    padding-left: 8px;
+  }
 `;
 
 const Wrapper = styled.div`

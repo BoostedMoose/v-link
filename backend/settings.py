@@ -35,6 +35,7 @@ def migrate_settings():
             defaults = json.load(f)
         with user_app.open('r', encoding='utf-8') as f:
             user = json.load(f)
+
         missing = {k: v for k, v in defaults.items() if k not in user}
         if missing:
             user.update(missing)

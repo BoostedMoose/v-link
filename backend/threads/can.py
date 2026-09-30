@@ -100,7 +100,18 @@ class Config:
                 key = sensor['key']
                 can_id = int(sensor['can_id'], 16)
                 byte_index = int(sensor['byte_index'])
-                bit_index = int(sensor['bit_index'])
+                mask = sensor.get('mask')
+                if mask is not None:
+                    mask = int(mask, 0) if isinstance(mask, str) else int(mask)
+                    shift = int(sensor.get('shift', 0))
+                    if not 0 < mask <= 0xFF:
+                        raise ValueError(f'Invalid mask for signal sensor "{key}"')
+                    if shift < 0 or shift > 7:
+                        raise ValueError(f'Invalid shift for signal sensor "{key}"')
+                    bit_index = None
+                else:
+                    bit_index = int(sensor['bit_index'])
+                    shift = None
                 invert = bool(sensor.get('invert', False))
                 scale = sensor.get('scale')
 
@@ -114,6 +125,8 @@ class Config:
                     'can_id': can_id,
                     'byte_index': byte_index,
                     'bit_index': bit_index,
+                    'mask': mask,
+                    'shift': shift,
                     'invert': invert,
                     'scale': scale,
                 }
@@ -432,14 +445,19 @@ class CANListener(can.Listener):
 
             for sensor in self.signal_sensors_by_id.get(msg.arbitration_id, []):
                 byte_index = sensor['byte_index']
-                bit_index = sensor['bit_index']
 
                 if byte_index < 0 or byte_index >= len(data):
                     continue
-                if bit_index < 0 or bit_index > 7:
-                    continue
 
-                value = (data[byte_index] >> bit_index) & 0x01
+                mask = sensor.get('mask')
+                if mask is not None:
+                    value = (data[byte_index] & mask) >> sensor['shift']
+                else:
+                    bit_index = sensor['bit_index']
+                    if bit_index < 0 or bit_index > 7:
+                        continue
+                    value = (data[byte_index] >> bit_index) & 0x01
+
                 if sensor.get('invert', False):
                     value = 0 if value else 1
 
@@ -447,7 +465,6 @@ class CANListener(can.Listener):
                     value = eval(sensor['scale'], {'value': value, 'data': data})
 
                 shared_state.update_car_data(sensor['key'], float(value))
-                return
-                    
+
         except Exception as e:
             self.logger.error(f'[CAN] CAN listener error: {e}')

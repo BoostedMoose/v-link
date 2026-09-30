@@ -5,7 +5,7 @@ const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 /** Called only in a new worker, before the driver's transferIn loop exists. */
 export async function resetUsbSession<T extends UsbDevice>(
   findDevice: () => Promise<T | null>,
-  timeoutMs = 8000,
+  timeoutMs = 15000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs
   let resetIssued = false

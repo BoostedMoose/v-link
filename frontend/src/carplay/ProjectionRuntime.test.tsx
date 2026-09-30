@@ -36,9 +36,9 @@ const resume = () => act(() => { vi.advanceTimersByTime(USB_RELEASE_DELAY_MS) })
 const fail = () => act(() => { screen.getByText('Fail').click() })
 
 describe('bounded projection recovery', () => {
-  it('resets USB on the first runtime in a fresh browser', () => {
+  it('starts a fresh browser without an unnecessary physical USB reset', () => {
     render(<ProjectionRuntime command="" commandCounter={0} />)
-    expect(screen.getByTestId('runtime').getAttribute('data-reset')).toBe('true')
+    expect(screen.getByTestId('runtime').getAttribute('data-reset')).toBe('false')
   })
 
   it('destroys the previous runtime before creating fresh resources and preserves the app view', () => {

@@ -10,6 +10,11 @@ const Dots = styled.div`
   align-items: center;
   overflow: hidden;
   margin-bottom: 20px;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    height: 12px;
+    margin-bottom: 3px;
+  }
 `;
 
 interface PaginationProps {
