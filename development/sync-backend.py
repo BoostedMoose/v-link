@@ -121,8 +121,9 @@ def rsync_commands(
     if dry_run:
         common.append("--dry-run")
     # Limit deletions to the two source directories, never the installation root.
+    # Remove excluded Pi bytecode too, so it cannot keep obsolete directories alive.
     commands = [
-        [*common, "--delete-delay", "--", f"{directory}/", f"{target}:{remote_root}/{directory}/"]
+        [*common, "--delete-delay", "--delete-excluded", "--", f"{directory}/", f"{target}:{remote_root}/{directory}/"]
         for directory in SOURCE_DIRECTORIES
     ]
     commands.append([*common, "--", *ROOT_FILES, f"{target}:{remote_root}/"])

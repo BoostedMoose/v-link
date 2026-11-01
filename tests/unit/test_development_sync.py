@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -112,6 +113,7 @@ class DevelopmentSyncTests(unittest.TestCase):
         for command in commands:
             self.assertIn("--protect-args", command)
             self.assertIn("--exclude=__pycache__/", command)
+            self.assertEqual("--delete-excluded" in command, command in mirrored)
 
     def test_simulation_sync_preserves_other_development_files(self):
         command = sync.rsync_commands("pi@host", "/home/pi/v-link", ["ssh"])[-1]
@@ -163,6 +165,56 @@ class DevelopmentSyncTests(unittest.TestCase):
     def test_requirements_change_can_be_synced_while_app_is_stopped(self, connect):
         self.inspect_remote("restart", "new-requirements-hash")
         connect.assert_not_called()
+
+
+@unittest.skipUnless(shutil.which("rsync"), "rsync is not installed")
+class RsyncCacheCleanupTests(unittest.TestCase):
+    def check_cache_cleanup(self, *, dry_run=False):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index, directory in enumerate(sync.SOURCE_DIRECTORIES):
+                with self.subTest(directory=directory):
+                    source = root / "source" / directory
+                    destination = root / "destination" / directory
+                    source.mkdir(parents=True)
+                    (source / "current.py").write_text("pass\n")
+                    local_cache = source / "__pycache__"
+                    local_cache.mkdir()
+                    (local_cache / "local.pyc").write_bytes(b"local bytecode")
+                    (source / "local.pyo").write_bytes(b"local bytecode")
+                    stale_cache = destination / "dev" / "__pycache__"
+                    stale_cache.mkdir(parents=True)
+                    (stale_cache / "old.pyc").write_bytes(b"Pi bytecode")
+                    (destination / "dev" / "old.pyo").write_bytes(b"Pi bytecode")
+                    preserved = destination.parent / "development" / "keep.pyc"
+                    preserved.parent.mkdir(exist_ok=True)
+                    preserved.write_bytes(b"preserve outside mirrored folders")
+
+                    command = sync.rsync_commands(
+                        "pi@host", "/home/pi/v-link", ["ssh"], dry_run=dry_run
+                    )[index]
+                    # Exercise the actual transfer options locally without SSH or a Pi.
+                    command[-1] = str(destination) + "/"
+                    result = subprocess.run(
+                        command, cwd=source.parent, capture_output=True, text=True, check=True
+                    )
+
+                    self.assertNotIn("cannot delete non-empty directory", result.stdout + result.stderr)
+                    self.assertEqual((destination / "dev").exists(), dry_run)
+                    self.assertEqual((destination / "current.py").exists(), not dry_run)
+                    self.assertFalse((destination / "__pycache__").exists())
+                    self.assertFalse((destination / "local.pyo").exists())
+                    self.assertEqual(preserved.read_bytes(), b"preserve outside mirrored folders")
+                    self.assertTrue((local_cache / "local.pyc").exists())
+                    if dry_run:
+                        self.assertEqual((stale_cache / "old.pyc").read_bytes(), b"Pi bytecode")
+                        self.assertEqual((destination / "dev" / "old.pyo").read_bytes(), b"Pi bytecode")
+
+    def test_obsolete_directories_with_excluded_bytecode_are_deleted(self):
+        self.check_cache_cleanup()
+
+    def test_dry_run_preserves_obsolete_directories_and_bytecode(self):
+        self.check_cache_cleanup(dry_run=True)
 
 
 if __name__ == "__main__":
