@@ -33,6 +33,7 @@ describe('Content page switching', () => {
         state.keyStroke = '';
         state.switchPage = 'ArrowUp';
         state.pauseKeyBinds = false;
+        state.system.windowSize = { width: 800, height: 480 };
       });
     });
     render(<Content />);
@@ -42,5 +43,24 @@ describe('Content page switching', () => {
     });
 
     expect(APP.getState().system.view).toBe('Carplay');
+  });
+
+  it('includes Audio when cycling factory-screen pages', () => {
+    act(() => {
+      APP.getState().update((state) => {
+        state.system.startedUp = false;
+        state.system.windowSize = { width: 480, height: 248 };
+        state.system.view = 'Dashboard';
+        state.keyStroke = '';
+        state.switchPage = 'ArrowUp';
+        state.pauseKeyBinds = false;
+      });
+    });
+    render(<Content />);
+    for (const view of ['Music', 'Carplay', 'Settings', 'Dashboard']) {
+      act(() => APP.getState().update((state) => { state.keyStroke = 'ArrowUp'; }));
+      expect(APP.getState().system.view).toBe(view);
+      act(() => APP.getState().update((state) => { state.keyStroke = ''; }));
+    }
   });
 });

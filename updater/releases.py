@@ -175,6 +175,8 @@ def _replace(stage, app_dir, metadata):
     app_dir = Path(app_dir)
     backup = Path(tempfile.mkdtemp(prefix=".vlink-backup-", dir=app_dir))
     paths = [*MANAGED, MANIFEST]
+    if (stage / "Hardware-Test.py").is_file():
+        paths.append("Hardware-Test.py")
     if (stage / "updater" / "releases.py").is_file() and (stage / "Update.sh").is_file():
         paths.extend(("updater", "Update.sh"))
     (stage / MANIFEST).write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

@@ -45,6 +45,8 @@ export class RenderWorker {
       scope.postMessage({
         type: 'streamStarted',
         config: this.decoderConfig,
+        displayWidth: frame.displayWidth,
+        displayHeight: frame.displayHeight,
       })
     }
 

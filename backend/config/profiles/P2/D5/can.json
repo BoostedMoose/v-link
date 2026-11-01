@@ -3,7 +3,7 @@
     "name": "can",
     "interfaces": [
         {
-            "enabled": false,
+            "enabled": true,
             "bustype": "socketcan",
             "channel": "can1",
             "is_extended": true,
@@ -39,8 +39,8 @@
             "label": "Boost",
             "unit": "Bar",
             "min_value": 0,
-            "max_value": 1.5,
-            "limit_start": 1
+            "max_value": 2,
+            "limit_start": 1.5
         },
         "intake": {
             "interface": "can2",
@@ -57,7 +57,7 @@
             "target": "0x11",
             "is_16bit": true,
             "priority": 3,
-            "scale": "((value * 0.1)-273,15)",
+            "scale": "((value * 0.1)-273.15)",
             "label": "Intake",
             "unit": "°C",
             "min_value": 0,
@@ -79,7 +79,7 @@
             "target": "0x11",
             "is_16bit": true,
             "priority": 2,
-            "scale": "((value * 0.1)-273,15)",
+            "scale": "((value * 0.1)-273.15)",
             "label": "Coolant",
             "unit": "°C",
             "min_value": 0,
@@ -115,9 +115,9 @@
             "parameter": [
                 "0x0C"
             ],
-            "app_id": "ld1",
+            "app_id": "got",
             "req_id": "0x000FFFFE",
-            "rep_id": "0x00400005",
+            "rep_id": "0x01200005",
             "action": "0xA5",
             "target": "0x6E",
             "is_16bit": false,
@@ -129,27 +129,27 @@
             "max_value": 150,
             "limit_start": 100
         },
-        "lambda2": {
-            "interface": "can2",
-            "enabled": false,
+        "cabintemp": {
+            "interface": "can1",
+            "enabled": true,
             "type": "diagnostic",
             "parameter": [
-                "0x10",
-                "0x2C"
+                "0x00",
+                "0xA1"
             ],
-            "app_id": "ld2",
+            "app_id": "intmp",
             "req_id": "0x000FFFFE",
-            "rep_id": "0x00400021",
+            "rep_id": "0x00801001",
             "action": "0xA6",
-            "target": "0x7A",
-            "is_16bit": false,
+            "target": "0x29",
+            "is_16bit": true,
             "priority": 3,
-            "scale": "(value * (1.33 / 255.0))",
-            "label": "Lambda 2",
-            "unit": "V",
-            "min_value": 0,
-            "max_value": 2,
-            "limit_start": 2
+            "scale": "(value * 0.015625 - 100)",
+            "label": "Cabin Temp",
+            "unit": "°C",
+            "min_value": -10,
+            "max_value": 35,
+            "limit_start": 30
         },
         "rpm": {
             "interface": "can2",

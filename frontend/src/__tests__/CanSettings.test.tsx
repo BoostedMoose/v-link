@@ -149,7 +149,7 @@ describe('CanSettings', () => {
     expect(screen.getByText('INTERFACE')).toBeInTheDocument();
     expect(screen.getByText('CAN ID')).toBeInTheDocument();
     expect(screen.getByText('BYTE')).toBeInTheDocument();
-    expect(screen.getByText('BIT')).toBeInTheDocument();
+    expect(screen.getByText('FIELD')).toBeInTheDocument();
   });
 
   it('Diagnostic section is open by default', () => {

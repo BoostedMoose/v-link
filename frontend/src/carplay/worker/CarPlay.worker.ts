@@ -3,10 +3,12 @@ import CarplayWeb, {
   DongleConfig,
   SendAudio,
   SendCommand,
+  SendBoxSettings,
   SendTouch,
   PhoneType,
   Plugged,
   findDevice,
+  DEFAULT_CONFIG,
 } from 'node-carplay/web'
 import { AudioPlayerKey, Command, KeyCommand } from "./types";
 import { RenderEvent, ResetEvent } from './render/RenderEvents'
@@ -134,18 +136,23 @@ const withoutUsbReset = async <T>(device: USBDevice, operation: () => Promise<T>
   }
 }
 
-const startProjection = async (nextConfig: Partial<DongleConfig>, resetDevice = false) => {
+const startProjection = async (
+  nextConfig: Partial<DongleConfig>,
+  androidAutoSize: { width: number; height: number },
+  resetDevice = false,
+) => {
   if (carplayWeb) return
 
   clearAudioState()
   videoMessageCount = 0
   driverHealthyReported = false
   lastUsbError = null
-  config = nextConfig
+  const resolvedConfig: DongleConfig = { ...DEFAULT_CONFIG, ...nextConfig }
+  config = resolvedConfig
   const device = resetDevice ? await resetUsbSession(findDevice) : await findDevice()
   if (!device) throw new Error('Carlinkit dongle is not available')
 
-  const next = new CarplayWeb(config)
+  const next = new CarplayWeb(resolvedConfig)
   carplayWeb = next
   next.onmessage = handleMessage
   next.dongleDriver.on('message', message => {
@@ -159,6 +166,19 @@ const startProjection = async (nextConfig: Partial<DongleConfig>, resetDevice = 
 
   try {
     await withoutUsbReset(device, () => next.start(device))
+    const boxSettingsConfig: DongleConfig = {
+      ...resolvedConfig,
+      width: androidAutoSize.width,
+      height: androidAutoSize.height,
+    }
+    const boxSettingsSent = await next.dongleDriver.send(new SendBoxSettings(boxSettingsConfig))
+    if (boxSettingsSent !== true) {
+      throw new Error('Failed to configure the Android Auto projection size')
+    }
+    console.info('[CarPlay] BoxSettings:', {
+      carPlay: `${resolvedConfig.width}x${resolvedConfig.height}`,
+      androidAuto: `${androidAutoSize.width}x${androidAutoSize.height}`,
+    })
     postMessage({ type: 'workerStarted' })
   } catch (error) {
     if (carplayWeb === next) carplayWeb = null
@@ -264,8 +284,8 @@ onmessage = async (event: MessageEvent<Command>) => {
       }
       break
     case 'start':
-      const { config: startConfig, resetDevice } = event.data.payload
-      runLifecycle(() => startProjection(startConfig, resetDevice))
+      const { config: startConfig, androidAutoSize, resetDevice } = event.data.payload
+      runLifecycle(() => startProjection(startConfig, androidAutoSize, resetDevice))
       break
     case 'touch':
       if (config && carplayWeb) {

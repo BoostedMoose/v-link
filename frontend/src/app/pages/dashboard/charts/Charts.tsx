@@ -20,16 +20,26 @@ const Container = styled.div`
   gap: 30px;
   width: 100%;
   height: 100%;
+  @media (max-width: 520px), (max-height: 300px) {
+    gap: 4px;
+  }
 `;
 
 const Chart = styled.div`
   display: flex;
   height: 60%;
+  @media (max-width: 520px), (max-height: 300px) {
+    height: 54%;
+  }
 `;
 
 const List = styled.div`
   display: flex;
   gap: 20px;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    gap: 4px;
+  }
 `;
 
 

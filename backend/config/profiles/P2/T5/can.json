@@ -15,7 +15,7 @@
             "bustype": "socketcan",
             "channel": "can2",
             "is_extended": true,
-            "bitrate": 250000,
+            "bitrate": 500000,
             "wait_for_ecu": true
         }
     ],

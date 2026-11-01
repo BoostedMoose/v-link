@@ -461,20 +461,15 @@ const Settings = () => {
           },
         };
         setCurrentSettings(nextSettings);
-        if (key === 'daylight_backlight') {
-          socket.app.emit('backlight:update', { daylight: newValue });
-        }
-        if (key === 'darkness_backlight') {
-          socket.app.emit('backlight:update', { darkness: newValue });
+        if (key === 'manual_backlight') {
+          socket.app.emit('backlight:update', { manual: newValue });
         }
         scheduleSave(nextSettings);
       };
 
-      const labelStyle = key === 'daylight_backlight' ? { whiteSpace: 'nowrap' as const } : undefined;
-
       return (
         <Element>
-          <Caption2 style={labelStyle}>{label}</Caption2>
+          <Caption2>{label}</Caption2>
           <Divider />
           <Spacer style={{ width: `${rangeWidth}px` }}>
             <CustomSlider
@@ -773,9 +768,8 @@ const Settings = () => {
             <Element>
               <Title>Backlight Settings</Title>
             </Element>
-            {renderSetting("daylight_backlight", currentSettings)}
             {renderSetting("auto_backlight", currentSettings)}
-            {renderSetting("darkness_backlight", currentSettings)}
+            {renderSetting("manual_backlight", currentSettings)}
 
             {settings.constants.modules.rti &&
               <Element>
