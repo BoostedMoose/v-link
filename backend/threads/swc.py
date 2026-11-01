@@ -222,6 +222,7 @@ class ButtonHandler:
     # Toggle RTI status
     def _toggle_rti_status(self):
         shared_state.rtiStatus = not shared_state.rtiStatus
+        shared_state.hdmiStatus = shared_state.rtiStatus
         shared_state.hdmi_event.set()
         logger.debug(f'[SWC] RTI status: {shared_state.rtiStatus}')
 

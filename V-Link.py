@@ -21,38 +21,48 @@
 import sys
 import os
 import subprocess
+import shlex
 
 
 def activate_venv():
-    venv_path = f"/home/{os.getenv('USER')}/v-link/venv"
-    activate_script = os.path.join(venv_path, 'bin', 'activate')
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_path = os.path.join(script_dir, 'venv')
+    python_bin = os.path.join(venv_path, 'bin', 'python')
 
-    if not os.path.exists(activate_script):
-        logger.error(f'[V-Link] Activation script for venv not found: {activate_script}')
-        logger.error(f'[V-Link] Please ensure the virtual environment is set up correctly. Exiting...')
-        sys.exit(0)
+    if not os.path.exists(python_bin):
+        sys.stderr.write(f'[V-Link] Python interpreter for venv not found: {python_bin}\n')
+        sys.stderr.write('[V-Link] Please ensure the virtual environment is set up correctly. Exiting...\n')
+        sys.exit(1)
 
-    os.system(f'. {activate_script}')
+    if os.path.abspath(sys.prefix) == os.path.abspath(venv_path):
+        return
 
-    # Update PATH to include the virtual environment
-    os.environ['PATH'] = os.path.join(venv_path, 'bin') + os.pathsep + os.environ.get('PATH', '')
-    # Add site-packages to sys.path
-    site_packages = os.path.join(venv_path, 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
-    sys.path.insert(0, site_packages)
+    env = os.environ.copy()
+    env['VIRTUAL_ENV'] = venv_path
+    env['PATH'] = os.path.join(venv_path, 'bin') + os.pathsep + env.get('PATH', '')
+    env.pop('PYTHONHOME', None)
 
-activate_venv()
+    os.execve(
+        python_bin,
+        [python_bin, os.path.abspath(__file__), *sys.argv[1:]],
+        env,
+    )
+
+if __name__ == '__main__':
+    activate_venv()
 
 import threading
 import time
 import argparse
+import collections
+import logging
 
 from pathlib import Path
-from tabulate import tabulate
+
+from backend.version import VERSION
 
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from backend.dev.vcan            import VCANThread
 
 from backend.server              import ServerThread
 
@@ -88,13 +98,12 @@ class VLINK:
             'swc':      SWCThread,
             'cam':      CAMThread,
           
-            'vcan':     VCANThread,
         }
 
         if shared_state.pimost:
             self.threads['mst'] = MOSTThread
 
-        logger.info('Starting V-Link 3.1.0')
+        logger.info(f'Starting V-Link {VERSION}')
 
     def detect_rpi(self):
 
@@ -135,6 +144,16 @@ class VLINK:
         settings.load_modules()
 
         if shared_state.vCan:
+            # Simulation tools are available in source checkouts, not release ZIPs.
+            try:
+                from development.vcan import VCANThread
+            except ModuleNotFoundError as error:
+                if error.name not in ('development', 'development.vcan'):
+                    raise
+                raise RuntimeError(
+                    '--vcan requires the development tools from a V-Link source checkout.'
+                ) from error
+            self.threads['vcan'] = VCANThread
             self.start_thread('vcan', logger)
             time.sleep(.05)
 
@@ -168,14 +187,22 @@ class VLINK:
                 return
 
         thread_class = self.threads[thread_name]
-        thread = thread_class(logger=logger) # instantiate thread
-        thread.daemon = True
-        thread.start()
+        try:
+            thread = thread_class(logger=logger) # instantiate thread
+            thread.daemon = True
+            thread.start()
+        except Exception as error:
+            shared_state.THREADS[thread_name] = None
+            logger.exception(
+                f'[V-Link] Could not initialize "{thread_name}" thread; '
+                f'the module will remain disabled: {error}'
+            )
+            return
 
         shared_state.THREADS[thread_name] = thread
-
         time.sleep(.05)
         if not thread.is_alive():
+            shared_state.THREADS[thread_name] = None
             logger.error(f'[V-Link] "{thread_name}" failed to start.')
         else:
             logger.info(f'[V-Link] {thread_name}-thread started.')
@@ -261,13 +288,15 @@ class VLINK:
             logger.info('[V-Link] Restarting App')
             shared_state.restart_event.clear()
 
-            for thread_name, thread in shared_state.THREADS.items():
-                if thread_name != 'server' and isinstance(thread, threading.Thread) and thread.is_alive():
+            # Release Chromium/WebUSB first, then hardware, then the server.
+            # Re-exec the application so no RTI, ignition, event or sensor state
+            # leaks into the next run. Saved settings and launch flags survive.
+            self.stop_thread('app')
+            for thread_name in list(shared_state.THREADS):
+                if thread_name not in ('app', 'server'):
                     self.stop_thread(thread_name)
-            time.sleep(.5)
-            
-            self.start_thread('app', logger)
-            self.start_modules()
+            self.stop_thread('server')
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
 
     def process_hdmi_event(self):
         if shared_state.hdmi_event.is_set():
@@ -278,14 +307,15 @@ class VLINK:
                 else ('vcgencmd display_power 1', 'vcgencmd display_power 0')
             )
 
-            if  not shared_state.hdmiStatus:
-                logger.info('[V-Link] Toggle HDMI Off')
-                os.system(hdmi_off)
-            else:
+            if shared_state.hdmiStatus:
                 logger.info('[V-Link] Toggle HDMI On')
                 os.system(hdmi_on)
+            else:
+                logger.info('[V-Link] Toggle HDMI Off')
+                os.system(hdmi_off)
 
-            shared_state.hdmiStatus = not shared_state.hdmiStatus
+            # do not invert state here, callers set state instead.
+            # shared_state.hdmiStatus = not shared_state.hdmiStatus
 
 
     def process_update_event(self):
@@ -298,6 +328,8 @@ class VLINK:
         if shared_state.start_event.is_set():
             shared_state.start_event.clear()
             self.start_modules()
+            return True
+        return False
 
 
 def clear_screen():
@@ -307,12 +339,48 @@ def clear_screen():
         os.system('clear')
 
 
+_display_initialized = False
+_app_started = False
+_prev_display_snapshot = None
+
+LOG_CAPACITY = 20
+
+class _RingBufferHandler(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.WARNING)
+        self.buffer = collections.deque(maxlen=LOG_CAPACITY)
+        self.setFormatter(logging.Formatter('%(levelname)-8s %(message)s'))
+
+    def emit(self, record):
+        if record.levelno < self.level:
+            return
+        msg = self.format(record)
+        if record.levelno >= logging.ERROR:
+            msg = f'\033[31m{msg}\033[0m'
+        else:
+            msg = f'\033[33m{msg}\033[0m'
+        self.buffer.append(msg)
+
+_log_handler = _RingBufferHandler()
+
+
 def non_blocking_input(prompt):
     try:
         return input(prompt)
     except EOFError:
         return None
-    
+
+
+def parse_window_size(value):
+    try:
+        width, height = (int(part) for part in value.lower().split('x', 1))
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('window size must use WIDTHxHEIGHT, for example 400x234')
+
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError('window width and height must be greater than zero')
+    return width, height
+
 
 def setup_arguments():
     parser = argparse.ArgumentParser(
@@ -326,33 +394,83 @@ def setup_arguments():
     parser.add_argument('--vlin', action='store_true', help='Simulate LIN-Bus')
     parser.add_argument('--vite', action='store_false', help='Start on Vite-Port 5173')
     parser.add_argument('--nokiosk', action='store_false', help='Start in windowed mode')
+    parser.add_argument(
+        '--window-size',
+        type=parse_window_size,
+        default=(1280, 720),
+        metavar='WIDTHxHEIGHT',
+        help='Window size used with --nokiosk (default: 1280x720)',
+    )
     parser.add_argument('--dev', action='store_true', help='Development mode')
 
     return parser.parse_args()
 
 
-def display_thread_states():
-    clear_screen()
-    # Display the app name and version
-    print('V-Link 3.1.0 | Boosted Moose')
-    print('Device: ', vlink.rpiModel, ' | ', vlink.rpiProtocol)
-    print(f'RTI state: {"Up" if shared_state.rtiStatus else "Down"}')
-    print(f'IGN state: {"High" if shared_state.ignStatus else "Low"}')
-    print('')
-    print('=' * 52)  # Decorative line
-    print('')
-    print('Thread states:')
+def display_starting():
+    dots = '.' * (int(time.monotonic() * 2) % 4)
+    sys.stdout.write(f'\r\033[K  Starting V-Link{dots:<3}')
+    sys.stdout.flush()
 
-    thread_names = ['Server', 'App', 'CAN', 'SWC', 'ADC', 'RTI', 'VCAN', 'CAM']
-    
-    thread_states = [
-        shared_state.THREADS.get(name.lower(), None).is_alive() if shared_state.THREADS.get(name.lower()) else False
-        for name in thread_names
+
+def _get_display_snapshot():
+    thread_states = tuple(
+        (key, isinstance(thread, threading.Thread) and thread.is_alive())
+        for key, thread in shared_state.THREADS.items()
+    )
+    return (
+        thread_states,
+        shared_state.rtiStatus,
+        shared_state.ignStatus.is_set(),
+        tuple(_log_handler.buffer),
+    )
+
+
+def display_thread_states():
+    global _display_initialized, _prev_display_snapshot
+
+    snapshot = _get_display_snapshot()
+    if _display_initialized and snapshot == _prev_display_snapshot:
+        return
+    _prev_display_snapshot = snapshot
+
+    lines = [
+        '',
+        f'  The data below is updated automatically, to reflect the current state of V-Link.',
+        '',
+        f'  V-Link {VERSION}  |  Boosted Moose',
+        f'  Device: {vlink.rpiModel} | {vlink.rpiProtocol}',
+        f'  RTI: {"Up  " if shared_state.rtiStatus else "Down"}  |  IGN: {"High" if shared_state.ignStatus.is_set() else "Low "}',
+        '',
+        f'  {"Thread":<10}  Status',
+        f'  {"─" * 10}  {"─" * 10}',
     ]
 
-    table_data = [thread_names, thread_states]
-    table = tabulate(table_data, tablefmt='fancy_grid')
-    print('\n' + table)
+    for key, thread in shared_state.THREADS.items():
+        alive = isinstance(thread, threading.Thread) and thread.is_alive()
+        status = '\033[32m● running\033[0m' if alive else '\033[90m○ stopped\033[0m'
+        lines.append(f'  {key.upper():<10}  {status}')
+
+    lines.append(f'  {"─" * 25}')
+
+    if _log_handler.buffer:
+        count = len(_log_handler.buffer)
+        lines.append(f'  {count} recent warning{"s" if count != 1 else ""}')
+        for msg in _log_handler.buffer:
+            lines.append(f'  {msg}')
+    else:
+        lines.append('  No recent warnings.')
+
+    lines.append('')
+
+    if _display_initialized:
+        sys.stdout.write('\033[H')
+    else:
+        _display_initialized = True
+        sys.stdout.write('\033[?25l')
+
+    for line in lines:
+        sys.stdout.write(f'\r\033[K{line}\n')
+    sys.stdout.flush()
 
 
 if __name__ == '__main__':
@@ -360,7 +478,9 @@ if __name__ == '__main__':
     clear_screen()
 
     args = setup_arguments()
-    logger = logger(verbose=True)
+    logger = logger(verbose=args.verbose)
+    if not args.verbose:
+        logging.getLogger('vlink').addHandler(_log_handler)
 
 
     vlink = VLINK()
@@ -374,6 +494,7 @@ if __name__ == '__main__':
     shared_state.vLin = args.vlin
     shared_state.vite = args.vite
     shared_state.isKiosk = args.nokiosk
+    shared_state.browserWindowSize = args.window_size
     shared_state.dev = args.dev
 
     #Set ignition signal HIGH initially
@@ -391,16 +512,27 @@ if __name__ == '__main__':
             vlink.process_exit_event()
             vlink.process_restart_event()
             vlink.process_update_event()
-            vlink.process_start_event()
             #vlink.process_hdmi_event() # Currently Removed
 
             if not shared_state.verbose:
-                display_thread_states()
+                if _app_started:
+                    display_thread_states()
+                else:
+                    if vlink.process_start_event():
+                        _app_started = True
+                        clear_screen()
+                    else:
+                        display_starting()
+            else:
+                vlink.process_start_event()
 
             time.sleep(.1)
     except KeyboardInterrupt:
-            print('\n\nExiting...\n')
+            pass
     finally:
+            sys.stdout.write('\033[?25h\n')
+            print('Exiting... Please wait.\n')
+            sys.stdout.flush()
             vlink.join_threads()
             logger.info('Done.')
 
@@ -414,13 +546,19 @@ if __name__ == '__main__':
                 # Launch updater in a new terminal window
                 try:
                     logger.info('Starting update...')
+                    command = shlex.join(['sh', script_path, '--release-id', str(shared_state.update_release_id)])
                     subprocess.Popen([
                         'lxterminal',
                         f'--title=V-Link Updater',
                         '--command',
-                        f"sh -c 'sh \"{script_path}\"; exec bash'"
+                        'sh -c ' + shlex.quote(command + '; exec bash')
                     ])
                 except Exception as e:
-                    logger.error(f'Update failed: {e}')
+                    logger.error(f'Could not open updater terminal: {e}. Starting updater in background.')
+                    log_path = os.path.join(current_dir, 'logs', 'update.log')
+                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                    with open(log_path, 'a', encoding='utf-8') as update_log:
+                        subprocess.Popen(['sh', script_path, '--release-id', str(shared_state.update_release_id)],
+                                         stdout=update_log, stderr=subprocess.STDOUT, start_new_session=True)
 
             sys.exit(0)

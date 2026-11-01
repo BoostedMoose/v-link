@@ -4,12 +4,19 @@ import {
   AudioData,
   TouchAction,
 } from 'node-carplay/web'
+import type { ProjectionSource } from '../mediaState'
 
 export type AudioPlayerKey = string & { __brand: 'AudioPlayerKey' }
 
 export type CarplayWorkerMessage =
   | { data: CarplayMessage }
   | { data: { type: 'requestBuffer'; message: AudioData } }
+  | { data: { type: 'workerStarted' } }
+  | { data: { type: 'driverHealthy' } }
+  | { data: { type: 'failure'; message?: string } }
+  | { data: { type: 'videoStats'; count: number; bytes: number } }
+  | { data: { type: 'diagnostic'; message: string } }
+  | { data: { type: 'projectionSource'; source: Exclude<ProjectionSource, null> } }
 
 export type InitialisePayload = {
   videoPort: MessagePort
@@ -24,7 +31,11 @@ export type AudioPlayerPayload = {
 
 export type StartPayload = {
   config: Partial<DongleConfig>
+  androidAutoSize: { width: number; height: number }
+  resetDevice?: boolean
 }
+
+export type KeyCommand = string
 
 export type Command =
   | { type: 'frame' }
@@ -32,6 +43,7 @@ export type Command =
   | { type: 'initialise'; payload: InitialisePayload }
   | { type: 'audioBuffer'; payload: AudioPlayerPayload }
   | { type: 'start'; payload: StartPayload }
+  | { type: 'keyCommand'; command: KeyCommand }
   | {
       type: 'touch'
       payload: { x: number; y: number; action: TouchAction }

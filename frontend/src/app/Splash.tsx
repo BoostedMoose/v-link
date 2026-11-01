@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import styled, { css, keyframes } from 'styled-components';
-import { APP } from '../store/Store';
+import { APP } from '@/store/Store';
 
 // Keyframes for fade-out animation
 const fadeOut = keyframes`
@@ -12,10 +12,15 @@ const fadeOut = keyframes`
   }
 `;
 
+interface ContainerProps {
+  fadeOutAnimation: boolean;
+  fadeDuration: number;
+}
+
 // Styled-components
 const Container = styled.div.withConfig({
   shouldForwardProp: (prop) => !['fadeOutAnimation', 'fadeDuration'].includes(prop)
-})`
+})<ContainerProps>`
   position: absolute;
   z-index: 5;
   top: 0;

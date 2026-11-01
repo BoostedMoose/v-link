@@ -1,0 +1,223 @@
+{
+    "type": "data",
+    "name": "can",
+    "interfaces": [
+        {
+            "enabled": false,
+            "bustype": "socketcan",
+            "channel": "can1",
+            "is_extended": true,
+            "bitrate": 125000,
+            "wait_for_ecu": false
+        },
+        {
+            "enabled": true,
+            "bustype": "socketcan",
+            "channel": "can2",
+            "is_extended": true,
+            "bitrate": 500000,
+            "wait_for_ecu": true
+        }
+    ],
+    "sensors": {
+        "boost": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x12",
+                "0x9D"
+            ],
+            "app_id": "map",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00800021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 1,
+            "scale": "((value - 101.0) * 0.01)",
+            "label": "Boost",
+            "unit": "Bar",
+            "min_value": 0,
+            "max_value": 1.5,
+            "limit_start": 1
+        },
+        "intake": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0xCE"
+            ],
+            "app_id": "iat",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00800021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 3,
+            "scale": "(value * 1)",
+            "label": "Intake",
+            "unit": "°C",
+            "min_value": 0,
+            "max_value": 90,
+            "limit_start": 60
+        },
+        "coolant": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0xD8"
+            ],
+            "app_id": "col",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00800021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 2,
+            "scale": "(value / 2 - 20)",
+            "label": "Coolant",
+            "unit": "°C",
+            "min_value": 0,
+            "max_value": 150,
+            "limit_start": 100
+        },
+        "voltage": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x0A"
+            ],
+            "app_id": "vol",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00800021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 3,
+            "scale": "(value * 0.0236)",
+            "label": "Voltage",
+            "unit": "V",
+            "min_value": 0,
+            "max_value": 16,
+            "limit_start": 16
+        },
+        "lambda1": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x34"
+            ],
+            "app_id": "ld1",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 2,
+            "scale": "((value * 16.0) / 65536.0)",
+            "label": "Lambda 1",
+            "unit": "λ",
+            "min_value": 0,
+            "max_value": 2,
+            "limit_start": 2
+        },
+        "lambda2": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x2C"
+            ],
+            "app_id": "ld2",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 3,
+            "scale": "(value * (1.33 / 255.0))",
+            "label": "Lambda 2",
+            "unit": "V",
+            "min_value": 0,
+            "max_value": 2,
+            "limit_start": 2
+        },
+        "rpm": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x1D"
+            ],
+            "app_id": "rpm",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00800021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 1,
+            "scale": "(value * 40)",
+            "label": "Engine RPM",
+            "unit": "RPM",
+            "min_value": 0,
+            "max_value": 8000,
+            "limit_start": 7000
+        },
+        "speed": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x11",
+                "0x40"
+            ],
+            "app_id": "spd",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00800021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 512) / 65536.0",
+            "label": "Speed",
+            "unit": "km/h",
+            "min_value": 0,
+            "max_value": 260,
+            "limit_start": 240
+        }
+    },
+    "signal_sensors": [
+        {
+            "key": "light",
+            "label": "Light Sensor",
+            "interface": "can2",
+            "enabled": false,
+            "can_id": "0x00000000",
+            "byte_index": 0,
+            "bit_index": 0,
+            "invert": false,
+            "scale": "(1 - value) * 5.0"
+        },
+        {
+            "key": "reverse",
+            "label": "Reverse Gear",
+            "interface": "can2",
+            "enabled": false,
+            "can_id": "0x00000000",
+            "byte_index": 0,
+            "bit_index": 0,
+            "invert": false
+        }
+    ]
+}

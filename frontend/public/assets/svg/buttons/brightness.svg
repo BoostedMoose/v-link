@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="brightness" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 31.28 31.28">
+  <circle class="cls-1" cx="15.64" cy="15.64" r="6.07" />
+  <line class="cls-2" x1="15.64" y1="6.12" x2="15.64" y2="1" />
+  <line class="cls-2" x1="15.64" y1="30.28" x2="15.64" y2="25.16" />
+  <line class="cls-2" x1="25.16" y1="15.64" x2="30.28" y2="15.64" />
+  <line class="cls-2" x1="1" y1="15.64" x2="6.12" y2="15.64" />
+  <line class="cls-2" x1="22.37" y1="8.91" x2="25.99" y2="5.29" />
+  <line class="cls-2" x1="5.29" y1="25.99" x2="8.91" y2="22.37" />
+  <line class="cls-2" x1="22.37" y1="22.37" x2="25.99" y2="25.99" />
+  <line class="cls-2" x1="5.29" y1="5.29" x2="8.91" y2="8.91" />
+</svg>

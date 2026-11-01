@@ -1,4 +1,4 @@
-export type WorkerEventType = 'init' | 'frame' | 'renderDone'
+export type WorkerEventType = 'init' | 'frame' | 'reset' | 'renderDone'
 
 export type Renderer = 'webgl' | 'webgl2' | 'webgpu'
 
@@ -10,6 +10,10 @@ export class RenderEvent implements WorkerEvent {
   type: WorkerEventType = 'frame'
 
   constructor(public frameData: ArrayBuffer) {}
+}
+
+export class ResetEvent implements WorkerEvent {
+  type: WorkerEventType = 'reset'
 }
 
 export class InitEvent implements WorkerEvent {

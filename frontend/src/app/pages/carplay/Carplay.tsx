@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import styled, { css, keyframes, useTheme } from 'styled-components';
-import { eventEmitter } from '../../../app/helper/EventEmitter';
-import { APP } from '../../../store/Store';
-import { Typography } from '../../../theme/styles/Typography';
-import { Link } from '../../../theme/styles/Inputs';
-import { CustomIcon } from '../../../theme/styles/Icons';
-import { useNamespaces } from '../../../socket/Namespaces';
+import { eventEmitter } from '@/app/helper/EventEmitter';
+import { APP, useThemeColor } from '@/store/Store';
+import { Typography } from '@/theme/styles/Typography';
+import { Link } from '@/theme/styles/Inputs';
+import { CustomIcon } from '@/theme/styles/Icons';
+import { useNamespaces } from '@/socket/Namespaces';
+import { summarizeUsbDevices } from '@/carplay/usbDeviceSummary';
 
 // Keyframes for opening and closing the chainlink
 const openChainLeft = keyframes`
@@ -29,8 +30,12 @@ const closeChainRight = keyframes`
 `;
 
 
+interface SvgContainerProps {
+  connected?: boolean;
+}
+
 // Styled SVG container for animation
-const SvgContainer = styled.svg`
+const SvgContainer = styled.svg<SvgContainerProps>`
   width: 100px;
   height: auto;
 
@@ -67,7 +72,7 @@ function Carplay() {
     const theme = useTheme();
     const socket = useNamespaces();
     
-    const themeColor      = APP((state) => state.settings.general.colorTheme.value).toLowerCase()
+    const themeColor = useThemeColor();
     const carplaySettings = APP((state) => state.system.carplay);
     const appUpdate       = APP((state) => state.update);
     
@@ -86,8 +91,9 @@ function Carplay() {
                 const devices = await navigator.usb.getDevices();
 
                 if (devices.length > 0) {
-                    console.log(`(CarPlay) Devices found: ${devices}`);
-                    socket.log.emit('info', `(CarPlay) Devices found: ${devices}`);
+                    const deviceSummary = summarizeUsbDevices(devices);
+                    console.log(`(CarPlay) Devices found: ${deviceSummary}`);
+                    socket.log.emit('info', `(CarPlay) Devices found: ${deviceSummary}`);
                     appUpdate((state) => {
                         state.system.carplay.paired = true;
                     });
@@ -131,6 +137,10 @@ function Carplay() {
 
     // Handle button click
     const onClick = () => {
+        if (carplaySettings.phase === 'error') {
+            socket.sys.emit('systemTask', 'restart')
+            return
+        }
         if (!carplaySettings.paired) {
             // Send event to carplay component to pair the dongle
             console.log('(CarPlay) Pairing Dongle');
@@ -150,8 +160,10 @@ function Carplay() {
     return (
         <Container>
             <Body2>
-                {carplaySettings.paired && carplaySettings.dongle
-                    ? carplaySettings.connected && carplaySettings.worker
+                {carplaySettings.phase === 'error'
+                    ? 'CONNECTION FAILED — CLICK TO RETRY'
+                    : carplaySettings.paired && carplaySettings.dongle
+                    ? carplaySettings.phase === 'connected'
                         ? 'LAUNCHING...'
                         : 'CONNECT iPHONE / ANDROID DEVICE'
                     : 'CLICK TO PAIR DONGLE'}

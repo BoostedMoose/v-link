@@ -8,19 +8,20 @@ import lgpio
 import atexit
 from typing import Optional
 
+from ..shared.gpio import open_gpiochip
 from ..shared.shared_state import shared_state
 
 
 
 
 class CAMThread(threading.Thread):
-    def __init__(self, logger: logging.Logger = None, line=20, chip=0, active_high=True, poll_ms=50, debounce_ms=120):
+    def __init__(self, logger: logging.Logger = None, line=20, chip=None, active_high=True, poll_ms=50, debounce_ms=120):
         super().__init__(name="REVERSEThread")
         self.logger = logger or logging.getLogger("vlink")
         self._stop_event = threading.Event()
 
         self.line = line            # Gpio reverse gear input
-        self.chip_id = chip        
+        self.chip_id = chip
         self.active_high = active_high
         self.dt = poll_ms / 1000.0
 
@@ -31,27 +32,44 @@ class CAMThread(threading.Thread):
 
         self._prev = None
 
-        # Setup GPIO
-        try:
-            self._chip = lgpio.gpiochip_open(self.chip_id)
-            lgpio.gpio_claim_input(self._chip, self.line)
-        except Exception as e:
-            self.logger.error("Reverse init error (chip=%s, line=%s): %s", self.chip_id, self.line, e)
-            raise
+        self._requested_chip = chip
+        self._chip: Optional[int] = None
+        self._claimed = False
 
         self.daemon = True
 
     def stop_thread(self):
-        # Signal the thread to stop and release GPIO resources.
+        # The run method releases GPIO after its loop exits.
         self._stop_event.set()
+
+    def _initialize_gpio(self):
+        self._chip, self.chip_id = open_gpiochip(self._requested_chip)
         try:
-            if hasattr(self, "_chip"):
-                # Release the line first
+            lgpio.gpio_claim_input(self._chip, self.line)
+            self._claimed = True
+        except Exception:
+            lgpio.gpiochip_close(self._chip)
+            self._chip = None
+            raise
+
+        self.logger.info("Reverse input: using gpiochip%s line %s", self.chip_id, self.line)
+
+    def _release_gpio(self):
+        if self._chip is None:
+            return
+
+        try:
+            if self._claimed:
                 lgpio.gpio_free(self._chip, self.line)
-                # Then close the chip
-                lgpio.gpiochip_close(self._chip)
         except lgpio.error as e:
             self.logger.error(f"[Reverse] Could not release GPIO (chip={self.chip_id}, line={self.line}): {e}")
+        finally:
+            try:
+                lgpio.gpiochip_close(self._chip)
+            except lgpio.error as e:
+                self.logger.error(f"[Reverse] Could not close gpiochip{self.chip_id}: {e}")
+            self._chip = None
+            self._claimed = False
 
 
     def _read_active(self) -> bool:
@@ -60,6 +78,19 @@ class CAMThread(threading.Thread):
         return raw if self.active_high else (not raw)
 
     def run(self):
+        try:
+            self._initialize_gpio()
+        except Exception as e:
+            requested_chip = self.chip_id if self.chip_id is not None else "auto"
+            shared_state.reverseStatus.clear()
+            self.logger.error(
+                "Reverse init error (chip=%s, line=%s): %s. Reverse input disabled.",
+                requested_chip,
+                self.line,
+                e,
+            )
+            return
+
         self.logger.info("Reverse thread: started (chip=%s, line=%s)", self.chip_id, self.line)
 
         # Reading initial state
@@ -112,11 +143,7 @@ class CAMThread(threading.Thread):
                 self.logger.warning("Reverse loop error: %s", e)
                 time.sleep(0.2)
 
-        # Cleanup
-        try:
-            lgpio.gpiochip_close(self._chip)
-        except Exception:
-            pass
+        self._release_gpio()
 
 
 
@@ -134,52 +161,54 @@ except Exception as e:  # ImportError or similar
 
 
 class CameraGPIO:
-    # Driver GPIO para encender/apagar la alimentación de la cámara.
-    # - line: nº de línea BCM (p.ej. 18)
-    # - chip: nº de gpiochip (normalmente 0)
-    # - active_high: True si nivel alto = ON (inverso si False)
+    # GPIO driver to power camera on/off.
+    # - line: BCM line number (e.g. 18)
+    # - chip: optional gpiochip override (auto-detected by default)
+    # - active_high: True if high level = ON (inverted if False)
 
-    # Métodos:
-    # - set(on: bool)   → enciende/apaga
-    # - get() -> bool   → último estado lógico solicitado (no lectura física)
-    #  - toggle() -> bool
-    #  - level() -> int  → nivel eléctrico actual (0/1) si es posible leerlo
-    #  - cleanup()       → apaga y libera recursos
+    # Methods:
+    # - set(on: bool)   -> power on/off
+    # - get() -> bool   -> last requested logical state (not physical read)
+    # - toggle() -> bool
+    # - level() -> int  -> current electrical level (0/1) if readable
+    # - cleanup()       -> power off and release resources
 
 
 
-    def __init__(self, line: int = 26, chip: int = 0, active_high: bool = True, logger: Optional[logging.Logger] = None):
+    def __init__(self, line: int = 26, chip: Optional[int] = None, active_high: bool = True, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger("vlink")
         self.line = int(line)
-        self._chip_num = int(chip)
+        self._requested_chip = chip
+        self._chip_num: Optional[int] = None
         self.active_high = bool(active_high)
 
         self._chip: Optional[int] = None         # handle dev /dev/gpiochipN
         self._claimed: bool = False              # if line is claimed as output
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._on: bool = False                   # logic state as requested
 
         # cleanup request at exit
         atexit.register(self._safe_cleanup)
 
-        self.logger.debug(f"CameraGPIO init: line={self.line}, chip={self._chip_num}, active_high={self.active_high}")
+        requested_chip = chip if chip is not None else "auto"
+        self.logger.debug(f"CameraGPIO init: line={self.line}, chip={requested_chip}, active_high={self.active_high}")
 
     def _require_lgpio(self) -> None:
         if not LGPIO_AVAILABLE:
             raise RuntimeError(
-                f"lgpio no disponible: {_LGPIO_IMPORT_ERROR!r}. "
-                "Instala 'lgpio' o ejecuta en hardware compatible."
+                f"lgpio not available: {_LGPIO_IMPORT_ERROR!r}. "
+                "Install 'lgpio' or run on compatible hardware."
             )
 
     def _open_chip(self) -> None:
         if self._chip is None:
             self._require_lgpio()
             try:
-                self._chip = lgpio.gpiochip_open(self._chip_num)
-                self.logger.debug(f"CameraGPIO: abierto gpiochip{self._chip_num}")
+                self._chip, self._chip_num = open_gpiochip(self._requested_chip)
+                self.logger.debug(f"CameraGPIO: opened gpiochip{self._chip_num}")
             except Exception as e:
                 # disgnostic info
-                raise RuntimeError(f"not able to open /dev/gpiochip{self._chip_num}: {e}") from e
+                raise RuntimeError(f"not able to open camera GPIO controller: {e}") from e
 
     def _ensure_claimed(self) -> None:
         if not self._claimed:
@@ -197,11 +226,11 @@ class CameraGPIO:
         try:
             lgpio.gpio_write(self._chip, self.line, int(level))  # type: ignore[arg-type]
         except Exception as e:
-            raise RuntimeError(f"Fallo escribiendo nivel {level} en BCM{self.line}: {e}") from e
+            raise RuntimeError(f"Failed writing level {level} on BCM{self.line}: {e}") from e
 
    
     def set(self, on: bool) -> None:
-        # On (True) o off (False) camera.
+        # On (True) or off (False) camera.
         with self._lock:
             self._open_chip()
             self._ensure_claimed()
@@ -209,7 +238,7 @@ class CameraGPIO:
             level = 1 if (desired == self.active_high) else 0
             self._write_level(level)
             self._on = desired
-            self.logger.info(f"CameraGPIO: {'ON' if desired else 'OFF'} (nivel físico={level})")
+            self.logger.info(f"CameraGPIO: {'ON' if desired else 'OFF'} (physical level={level})")
 
     def get(self) -> bool:
         #returs the last logical state requested (not physical reading).
@@ -261,6 +290,7 @@ class CameraGPIO:
         except Exception:
             pass
 
-    def __repr__(self) -> str:  # debug 
-        return (f"<CameraGPIO line=BCM{self.line} chip={self._chip_num} "
+    def __repr__(self) -> str:  # debug
+        chip = self._chip_num if self._chip_num is not None else "auto"
+        return (f"<CameraGPIO line=BCM{self.line} chip={chip} "
                 f"active_high={self.active_high} on={self._on}>")

@@ -34,20 +34,29 @@ function getNaluFromStream(
 }
 
 function isKeyFrame(frameData: Uint8Array): boolean {
-  const idr = getNaluFromStream(frameData, NaluTypes.IDR)
-  return Boolean(idr)
+  try {
+    const idr = getNaluFromStream(frameData, NaluTypes.IDR)
+    return Boolean(idr)
+  } catch {
+    return false
+  }
 }
 
 function getDecoderConfig(frameData: Uint8Array): VideoDecoderConfig | null {
-  const spsNalu = getNaluFromStream(frameData, NaluTypes.SPS)
-  if (spsNalu) {
-    const sps = new SPS(spsNalu.nalu)
-    const decoderConfig: VideoDecoderConfig = {
-      codec: sps.MIME,
-      codedHeight: sps.picHeight,
-      codedWidth: sps.picWidth,
+  try {
+    const spsNalu = getNaluFromStream(frameData, NaluTypes.SPS)
+    if (spsNalu) {
+      const sps = new SPS(spsNalu.nalu)
+      const decoderConfig: VideoDecoderConfig = {
+        codec: sps.MIME,
+        codedHeight: sps.picHeight,
+        codedWidth: sps.picWidth,
+      }
+      return decoderConfig
     }
-    return decoderConfig
+  } catch {
+    // Invalid SPS data can occur after a truncated USB transfer or while the
+    // stream is switching. Later keyframes normally contain another SPS.
   }
   return null
 }

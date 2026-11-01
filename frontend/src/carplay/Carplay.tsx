@@ -1,8 +1,8 @@
 /* eslint-disable no-case-declarations */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { findDevice, requestDevice, CommandMapping, } from 'node-carplay/web'
-import { eventEmitter } from '../app/helper/EventEmitter';
-import { useNamespaces } from '../socket/Namespaces';
+import { eventEmitter } from '@/app/helper/EventEmitter';
+import { useNamespaces } from '@/socket/Namespaces';
 
 import styled, { css, useTheme } from 'styled-components';
 
@@ -11,9 +11,20 @@ import { CarPlayWorker } from './worker/types'
 import useCarplayAudio from './useCarplayAudio'
 import { useCarplayTouch } from './useCarplayTouch'
 import { InitEvent } from './worker/render/RenderEvents'
+import { transitionProjectionSession } from './sessionState'
+import { createEmptyCarplayMedia, hasCarplayMediaIdentityChanged, mergeCarplayMedia, playbackStatusFromAudioCommand } from './mediaState'
+import { CARPLAY_MEDIA_COMMAND_EVENT, type MediaCommand } from './mediaCommands'
 
-import { APP } from '../store/Store';
-import hexToRGBA from '../app/helper/HexToRGBA'
+import { APP } from '@/store/Store';
+import hexToRGBA from '@/app/helper/HexToRGBA'
+import {
+  androidAutoRequestDpi,
+  androidAutoRequestSize,
+  carplayRequestSize,
+  isCompactViewport,
+  projectionDisplayRect,
+} from '@/app/helper/Layout'
+import type { ViewportSize } from '@/app/helper/Layout'
 
 import "./../themes.scss"
 
@@ -31,7 +42,6 @@ const Container = styled.div`
 
 const Stream = styled.div`
   position: absolute;
-  bottom: 0;
   zIndex: 1;
 
   height: 100%;
@@ -41,7 +51,12 @@ const Stream = styled.div`
   margin: 0;
 `
 
-const Overlay = styled.div`
+interface OverlayProps {
+  isVisible: boolean;
+  navVisible: boolean;
+}
+
+const Overlay = styled.div<OverlayProps>`
   position: absolute;
   top: 0;
   left: 0;
@@ -49,7 +64,7 @@ const Overlay = styled.div`
   width: 100%;
 
   zIndex: 2;
-  
+
   display: flex;
   justify-content: center;
   alignItems: center;
@@ -61,17 +76,29 @@ const Overlay = styled.div`
 `;
 
 
-const videoChannel = new MessageChannel()
-const micChannel = new MessageChannel()
-
-const RETRY_DELAY_MS = 30000
+const STARTUP_WATCHDOG_MS = 12000
+const USB_DETACH_DEBOUNCE_MS = 4000
+const RETRY_BASE_MS = 1000
+const RETRY_CAP_MS = 15000
+const MAX_SESSION_RETRIES = 5
 
 interface CarplayProps {
   command: string,
   commandCounter: number
+  resetDevice?: boolean
+  onRecovery: () => void
+  onHealthy: () => void
 }
 
-function Carplay({ command, commandCounter }: CarplayProps) {
+function Carplay({ command, commandCounter, resetDevice = false, onRecovery, onHealthy }: CarplayProps) {
+
+  const [videoChannel] = useState(() => new MessageChannel())
+  const [micChannel] = useState(() => new MessageChannel())
+  const resetDeviceRef = useRef(resetDevice)
+  const disposedRef = useRef(false)
+  const failedRef = useRef(false)
+  const usbStartingRef = useRef(false)
+  const healthyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const socket = useNamespaces();
 
@@ -81,15 +108,23 @@ function Carplay({ command, commandCounter }: CarplayProps) {
   const height          = APP((state) => state.system.carplaySize.height);
   const content         = APP((state) => state.system.interface.content)
   const navBar          = APP((state) => state.system.interface.navBar)
+  const windowSize      = APP((state) => state.system.windowSize)
+  const compact         = isCompactViewport(windowSize)
 
-  const dongleConfig    = APP((state) => state.settings.dongle_config);
-  const exitToDash      = APP((state) => state.settings.general.exitToDash);
+  const view            = APP((state) => state.system.view);
+  type DongleConfig = Record<string, { value: unknown }>;
+  type GeneralSettings = { exitToDash?: { value: boolean } };
 
-  const [phoneState, setPhoneState] = useState<Boolean | null>(false);
+  const dongleConfig = APP((state) => state.settings.dongle_config as DongleConfig | undefined);
+  const exitToDash = APP((state) => (state.settings.general as GeneralSettings | undefined)?.exitToDash?.value ?? false);
+  const exitToDashRef = useRef(exitToDash);
+  const compactRef = useRef(compact);
 
+  useEffect(() => { exitToDashRef.current = exitToDash; }, [exitToDash]);
+  useEffect(() => { compactRef.current = compact; }, [compact]);
+  const lastDongleConfigSigRef = useRef<string | null>(null);
 
   const flattenConfig = (config: Record<string, any>) => {
-
     const result: Record<string, any> = {};
     Object.entries(config).forEach(([key, value]) => {
       if (typeof value === "object" && value !== null && "value" in value) {
@@ -99,21 +134,62 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     return result;
   };
 
-  const config = useMemo(() => {
+  const projectionConfig = useMemo(() => {
+    const dongleConfigFlat = dongleConfig ? flattenConfig(dongleConfig) : {};
+    const viewport = { width, height };
+    const carPlaySize = carplayRequestSize({ width, height });
+    const androidAutoSize = androidAutoRequestSize(viewport);
+    const configuredDpi = typeof dongleConfigFlat.dpi === 'number'
+      ? dongleConfigFlat.dpi
+      : undefined;
+    const androidAutoDpi = androidAutoRequestDpi(viewport, configuredDpi);
     const carplayConfig = {
-      ...flattenConfig(dongleConfig),
-      width: width,
-      height: height,
+      ...dongleConfigFlat,
+      androidWorkMode: dongleConfigFlat.androidWorkMode ?? true, // TODO check if this is needed, node-carplay should default to true
+      width: carPlaySize.width,
+      height: carPlaySize.height,
+      dpi: androidAutoDpi,
     };
-    
-    socket.log.emit('info', `(CarPlay) Config: ${JSON.stringify(carplayConfig)}`);
 
-    return carplayConfig;
+    const sig = JSON.stringify({ carplayConfig, androidAutoSize, androidAutoDpi });
+    if (sig !== lastDongleConfigSigRef.current) {
+      socket.log.emit(
+        'info',
+        `(CarPlay) Config: ${JSON.stringify(carplayConfig)}; Android Auto=${androidAutoSize.width}x${androidAutoSize.height}@${androidAutoDpi}dpi`,
+      );
+      lastDongleConfigSigRef.current = sig;
+    }
+
+    return { carplayConfig, androidAutoSize };
   }, [dongleConfig, width, height]);
+
+  const config = projectionConfig.carplayConfig
+
+  const configRef = useRef(projectionConfig)
+  useEffect(() => { configRef.current = projectionConfig }, [projectionConfig])
+
+  const [projectionSize, setProjectionSize] = useState<ViewportSize>({
+    width: config.width,
+    height: config.height,
+  })
+  const displayRect = useMemo(
+    () => projectionDisplayRect({ width, height }, projectionSize, compact),
+    [compact, height, projectionSize, width],
+  )
+  const projectionTop = Math.max(0, windowSize.height - height)
+
+  useEffect(() => {
+    if (carplaySettings.phase !== 'streaming') {
+      setProjectionSize({ width: config.width, height: config.height })
+    }
+  }, [carplaySettings.phase, config.height, config.width])
 
 
   const mainElem = useRef<HTMLDivElement>(null)
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const startupWatchdogRef = useRef<NodeJS.Timeout | null>(null)
+  const usbDetachTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const retryAttemptRef = useRef(0)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | null>(
@@ -155,7 +231,20 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     return worker
   }, [])
 
-  const { processAudio, getAudioPlayer, startRecording, stopRecording } =
+  useEffect(() => () => {
+    disposedRef.current = true
+    carplayWorker.onmessage = null
+    carplayWorker.terminate()
+    videoChannel.port1.close()
+    videoChannel.port2.close()
+    micChannel.port1.close()
+    micChannel.port2.close()
+    if (healthyTimerRef.current) clearTimeout(healthyTimerRef.current)
+  }, [carplayWorker, micChannel, videoChannel])
+
+  useEffect(() => () => { renderWorker?.terminate() }, [renderWorker])
+
+  const { processAudio, getAudioPlayer, resetAudioRouting, startRecording, stopRecording } =
     useCarplayAudio(carplayWorker, micChannel.port2)
 
   const clearRetryTimeout = useCallback(() => {
@@ -165,6 +254,53 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     }
   }, [])
 
+  const clearStartupWatchdog = useCallback(() => {
+    if (startupWatchdogRef.current) {
+      clearTimeout(startupWatchdogRef.current)
+      startupWatchdogRef.current = null
+    }
+  }, [])
+
+  const scheduleSessionRecovery = useCallback((reason: string) => {
+    if (retryTimeoutRef.current || !APP.getState().system.carplay.dongle) return
+
+    clearStartupWatchdog()
+    const attempt = ++retryAttemptRef.current
+    if (attempt > MAX_SESSION_RETRIES) {
+      socket.log.emit('error', `(CarPlay) Video recovery limit reached after: ${reason}`)
+      return
+    }
+
+    const delay = Math.min(RETRY_BASE_MS * 2 ** (attempt - 1), RETRY_CAP_MS)
+    socket.log.emit('info', `(CarPlay) Requesting a fresh video frame in ${delay}ms (${attempt}/${MAX_SESSION_RETRIES}): ${reason}`)
+
+    retryTimeoutRef.current = setTimeout(() => {
+      retryTimeoutRef.current = null
+      if (!APP.getState().system.carplay.dongle) return
+
+      // node-carplay has a permanently pending WebUSB transferIn(). Closing
+      // and reopening here races that read and can crash its read loop with
+      // AbortError/InvalidStateError. Keep the healthy phone/audio session and
+      // ask the dongle for another video frame instead.
+      carplayWorker.postMessage({ type: 'frame' })
+
+      startupWatchdogRef.current = setTimeout(() => {
+        startupWatchdogRef.current = null
+        if (APP.getState().system.carplay.phase === 'connected') {
+          scheduleSessionRecovery('phone remains connected without decoded video')
+        }
+      }, STARTUP_WATCHDOG_MS)
+    }, delay)
+  }, [carplayWorker, clearStartupWatchdog, socket.log])
+
+  const armStartupWatchdog = useCallback(() => {
+    clearStartupWatchdog()
+    startupWatchdogRef.current = setTimeout(() => {
+      startupWatchdogRef.current = null
+      scheduleSessionRecovery('phone connected but no video stream arrived')
+    }, STARTUP_WATCHDOG_MS)
+  }, [clearStartupWatchdog, scheduleSessionRecovery])
+
   /* V-Link Mod */
   // Grabbing a message from renderWorker to get a notification when the stream is starting
   useEffect(() => {
@@ -172,18 +308,35 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     renderWorker.onmessage = ev => {
       const { type } = ev.data;
       switch (type) {
-        case 'streamStarted':
-          socket.log.emit('info', '(CarPlay) Stream started')
-          // This useEffect will notify when the phone is connected and the stream started
+        case 'streamStarted': {
+          if (failedRef.current || disposedRef.current) break
+          clearStartupWatchdog()
+          clearRetryTimeout()
+          retryAttemptRef.current = 0
+          const { codec, codedWidth, codedHeight } = ev.data.config ?? {}
+          const { displayWidth, displayHeight } = ev.data
+          socket.log.emit(
+            'info',
+            `(CarPlay) Stream started: display=${displayWidth}x${displayHeight}, coded=${codedWidth}x${codedHeight} (${codec})`,
+          )
+          if (typeof displayWidth === 'number' && typeof displayHeight === 'number') {
+            setProjectionSize({ width: displayWidth, height: displayHeight })
+          } else if (typeof codedWidth === 'number' && typeof codedHeight === 'number') {
+            setProjectionSize({ width: codedWidth, height: codedHeight })
+          }
           appUpdate((state) => {
-            state.system.carplay.connected = true;
+            transitionProjectionSession(state.system.carplay, { type: 'streamStarted' })
           });
-
           break;
+        }
       }
     };
+    renderWorker.onerror = (ev) => {
+      socket.log.emit('error', `(CarPlay) Render worker error: ${ev.message} (${ev.filename}:${ev.lineno})`);
+    };
     return () => {
-      renderWorker.onmessage = null; // Clean up the listener when the worker changes
+      renderWorker.onmessage = null;
+      renderWorker.onerror = null;
     };
   }, [renderWorker]);
   /* V-Link Mod */
@@ -208,43 +361,86 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     carplayWorker.onmessage = ev => {
       const { type } = ev.data
       switch (type) {
+        case 'workerStarted':
+          usbStartingRef.current = false
+          if (APP.getState().system.carplay.phase === 'starting') clearStartupWatchdog()
+          break
         case 'plugged':
           console.log('(CarPlay) Worker connected')
           socket.log.emit('debug', '(CarPlay) Worker Connected')
 
           appUpdate((state) => {
-            state.system.carplay.worker = true;
+            transitionProjectionSession(state.system.carplay, { type: 'phoneConnected' })
           });
-
+          armStartupWatchdog()
+          break
+        case 'driverHealthy':
+          if (!healthyTimerRef.current && !failedRef.current) {
+            healthyTimerRef.current = setTimeout(onHealthy, 30000)
+          }
           break
         case 'unplugged':
+          clearStartupWatchdog()
+          resetAudioRouting()
           console.log('(CarPlay) Worker disconnected')
           socket.log.emit('debug', '(CarPlay) Worker Disconnected')
 
           appUpdate((state) => {
-            state.system.carplay.worker = false;
-            state.system.carplay.phone = false;
+            transitionProjectionSession(state.system.carplay, { type: 'phoneDisconnected' })
             state.system.carplay.user = false;
+            state.system.carplay.source = null
+            state.system.carplay.media = createEmptyCarplayMedia()
 
             state.system.interface.content = true
           });
 
-          if (phoneState)
-            console.log('(CarPlay) Phone still connected... Streaming error?')
-            socket.log.emit('debug', '(CarPlay) Phone still connected... Streaming error?')
-
           break
         case 'requestBuffer':
-          clearRetryTimeout()
           getAudioPlayer(ev.data.message)
           break
-        case 'audio':
-          clearRetryTimeout()
-          processAudio(ev.data.message)
+        case 'videoStats':
+          console.log(`(CarPlay) Video message ${ev.data.count}: ${ev.data.bytes} bytes`)
+          socket.log.emit('info', `(CarPlay) Video message ${ev.data.count}: ${ev.data.bytes} bytes`)
           break
-        case 'media':
-          //TODO: implement
+        case 'diagnostic':
+          console.info(ev.data.message)
           break
+        case 'projectionSource': {
+          const source = ev.data.source
+          appUpdate((state) => {
+            state.system.carplay.source = source
+          })
+          break
+        }
+        case 'audio': {
+          const audio = ev.data.message
+          appUpdate((state) => {
+            state.system.carplay.media.playbackStatus = playbackStatusFromAudioCommand(
+              state.system.carplay.media.playbackStatus,
+              audio.command,
+            )
+          })
+          processAudio(audio)
+          break
+        }
+        case 'media': {
+          const payload = ev.data.message.payload
+
+          if (!payload) break
+
+          appUpdate((state) => {
+            const previousMedia = state.system.carplay.media
+            const nextMedia = mergeCarplayMedia(previousMedia, payload)
+            if (hasCarplayMediaIdentityChanged(previousMedia, nextMedia)) {
+              console.info(
+                `(CarPlay) Media changed: title=${JSON.stringify(nextMedia.title)} artist=${JSON.stringify(nextMedia.artist)}`,
+              )
+            }
+            state.system.carplay.media = nextMedia
+          })
+
+          break
+        }
         case 'command':
           const {
             message: { value },
@@ -257,30 +453,43 @@ function Carplay({ command, commandCounter }: CarplayProps) {
               stopRecording()
               break
             case CommandMapping.requestHostUI:
-              if (exitToDash) {
+              if (exitToDashRef.current || compactRef.current) {
                 appUpdate((state) => {
                   state.system.view = "Dashboard";
                 });
-              } 
-              /* else {
+              } else {
                 appUpdate((state) => {
                   state.system.interface.navBar = true;
                 });
-              } */
+              }
           }
           break
         case 'failure':
-          if (retryTimeoutRef.current == null) {
-            console.error(`Carplay initialization failed -- Reloading page in ${RETRY_DELAY_MS}ms`,)
-            socket.log.emit('info', `Carplay initialization failed -- Trying to reload page.`,)
-            retryTimeoutRef.current = setTimeout(() => {
-              window.location.reload()
-            }, RETRY_DELAY_MS)
-          }
+          if (failedRef.current) break
+          failedRef.current = true
+          usbStartingRef.current = false
+          carplayWorker.terminate()
+          stopRecording()
+          resetAudioRouting()
+          if (healthyTimerRef.current) clearTimeout(healthyTimerRef.current)
+          clearRetryTimeout()
+          clearStartupWatchdog()
+          const failureMessage =
+            'message' in ev.data && typeof ev.data.message === 'string'
+              ? ev.data.message
+              : 'CarPlay worker initialization failed'
+          appUpdate((state) => {
+            transitionProjectionSession(state.system.carplay, {
+              type: 'failed',
+              error: failureMessage,
+            })
+          });
+          socket.log.emit('error', `(CarPlay) USB driver failed: ${failureMessage}`)
+          retryTimeoutRef.current = setTimeout(onRecovery, 3000)
           break
       }
     }
-  }, [carplayWorker, clearRetryTimeout, getAudioPlayer, processAudio, renderWorker, startRecording, stopRecording])
+  }, [armStartupWatchdog, carplayWorker, clearRetryTimeout, clearStartupWatchdog, getAudioPlayer, processAudio, renderWorker, resetAudioRouting, startRecording, stopRecording, onRecovery, onHealthy])
 
   useEffect(() => {
     const element = mainElem?.current
@@ -298,72 +507,154 @@ function Carplay({ command, commandCounter }: CarplayProps) {
     carplayWorker.postMessage({ type: 'keyCommand', command: command })
   }, [commandCounter]);
 
+  useEffect(() => {
+    const handleMediaCommand = (event: Event) => {
+      const command = (event as CustomEvent<MediaCommand>).detail
+      if (command === 'playOrPause') {
+        appUpdate((state) => {
+          const media = state.system.carplay.media
+          media.playbackStatus = media.playbackStatus > 0 ? 0 : 1
+        })
+      }
+      carplayWorker.postMessage({ type: 'keyCommand', command })
+      socket.log.emit('debug', `(CarPlay) Media command: ${command}`)
+    }
+
+    eventEmitter.addEventListener(CARPLAY_MEDIA_COMMAND_EVENT, handleMediaCommand)
+    return () => eventEmitter.removeEventListener(CARPLAY_MEDIA_COMMAND_EVENT, handleMediaCommand)
+  }, [carplayWorker, socket.log]);
+
+  // Request a new frame when re-entering the CarPlay view so key commands resume
+  useEffect(() => {
+    if (view !== 'Carplay') return
+    carplayWorker.postMessage({ type: 'frame' })
+  }, [view]);
+
   const checkDevice = useCallback(
     async (request: boolean = false) => {
       const device = request ? await requestDevice() : await findDevice()
+      if (disposedRef.current || failedRef.current) return
+      appUpdate((state) => {
+        state.system.carplay.detectionComplete = true
+      })
       if (device) {
-        carplayWorker.postMessage({ type: 'start', payload: { config } })
-
-        console.log('Phone connected')
-        socket.log.emit('info', '(CarPlay) Phone connected')
-        setPhoneState(true)
-
+        const phase = APP.getState().system.carplay.phase
         appUpdate((state) => {
-          state.system.carplay.phone = true;
-        });
+          transitionProjectionSession(state.system.carplay, { type: 'dongleDetected' })
+          state.system.carplay.paired = true
+        })
+
+        if (phase === 'idle' || phase === 'ready' || phase === 'error') {
+          const resetDevice = resetDeviceRef.current
+          resetDeviceRef.current = false
+          usbStartingRef.current = true
+          if (resetDevice) {
+            socket.log.emit('info', '(CarPlay) Resetting USB device for a fresh projection session')
+          }
+          appUpdate((state) => {
+            transitionProjectionSession(state.system.carplay, { type: 'startRequested' })
+          })
+          carplayWorker.postMessage({
+            type: 'start',
+            payload: {
+              config: configRef.current.carplayConfig,
+              androidAutoSize: configRef.current.androidAutoSize,
+              resetDevice,
+            },
+          })
+          clearStartupWatchdog()
+          startupWatchdogRef.current = setTimeout(() => {
+            if (disposedRef.current || failedRef.current) return
+            failedRef.current = true
+            carplayWorker.terminate()
+            const error = 'USB session startup timed out'
+            socket.log.emit('error', `(CarPlay) ${error}`)
+            appUpdate(state => {
+              transitionProjectionSession(state.system.carplay, { type: 'failed', error })
+            })
+            onRecovery()
+          }, 20000)
+        }
+
+        console.log('Dongle detected')
+        socket.log.emit('info', '(CarPlay) Dongle detected')
       } else {
-        console.log('Phone disconnected')
-        socket.log.emit('info', '(CarPlay) Phone disconnected')
-
-        setPhoneState(false)
-        appUpdate((state) => {
-          state.system.carplay.phone = false;
-        });
+        const workerActive = APP.getState().system.carplay.worker
+        if (!workerActive) {
+          console.log('Dongle not detected')
+          socket.log.emit('info', '(CarPlay) Dongle not detected')
+          appUpdate((state) => {
+            transitionProjectionSession(state.system.carplay, { type: 'dongleDisconnected' })
+          });
+        }
       }
     },
-    [carplayWorker]
+    [appUpdate, carplayWorker, clearStartupWatchdog, onRecovery, socket.log]
   )
 
   // usb connect/disconnect handling and device check
   useEffect(() => {
     navigator.usb.onconnect = async () => {
+      if (disposedRef.current || failedRef.current) return
+      if (usbDetachTimeoutRef.current) {
+        clearTimeout(usbDetachTimeoutRef.current)
+        usbDetachTimeoutRef.current = null
+      }
       console.log('Dongle connected')
       socket.log.emit('info', '(CarPlay) Dongle connected')
 
       appUpdate((state) => {
-        state.system.carplay.dongle = true;
+        transitionProjectionSession(state.system.carplay, { type: 'dongleDetected' })
+        state.system.carplay.paired = true
         state.system.carplay.pair = true;
       });
       checkDevice()
     }
 
     navigator.usb.ondisconnect = async () => {
-      const device = await findDevice()
-      if (!device) {
+      if (usbDetachTimeoutRef.current) clearTimeout(usbDetachTimeoutRef.current)
+      usbDetachTimeoutRef.current = setTimeout(async () => {
+        usbDetachTimeoutRef.current = null
+        const device = await findDevice()
+        if (disposedRef.current) return
+        // The new worker owns reset/re-enumeration until startup completes.
+        // Queuing stop here could close the replacement after it has opened.
+        if (usbStartingRef.current) return
+        if (device) return
+
+        clearRetryTimeout()
+        clearStartupWatchdog()
+        retryAttemptRef.current = 0
         carplayWorker.postMessage({ type: 'stop' })
         console.log('Dongle disconnected')
         socket.log.emit('info', '(CarPlay) Dongle disconnected')
 
-        setPhoneState(false)
-
         appUpdate((state) => {
-          state.system.carplay.dongle = false;
-          state.system.carplay.phone = false;
-          state.system.carplay.stream = false;
+          transitionProjectionSession(state.system.carplay, { type: 'dongleDisconnected' })
           state.system.carplay.user = false;
-
+          state.system.carplay.source = null
         });
-      }
+      }, USB_DETACH_DEBOUNCE_MS)
     }
 
-    //checkDevice()
-  }, [carplayWorker, checkDevice])
+    // WebUSB does not emit a connect event for a dongle that was already
+    // present when the page opened.
+    void checkDevice()
+
+    return () => {
+      navigator.usb.onconnect = null
+      navigator.usb.ondisconnect = null
+      if (usbDetachTimeoutRef.current) clearTimeout(usbDetachTimeoutRef.current)
+      clearRetryTimeout()
+      clearStartupWatchdog()
+    }
+  }, [appUpdate, carplayWorker, checkDevice, clearRetryTimeout, clearStartupWatchdog, socket.log])
 
   const pairDongle = useCallback(() => {
     checkDevice(true)
   }, [checkDevice])
 
-  const sendTouchEvent = useCarplayTouch(carplayWorker, width, height)
+  const sendTouchEvent = useCarplayTouch(carplayWorker)
 
 
   return (
@@ -373,22 +664,29 @@ function Carplay({ command, commandCounter }: CarplayProps) {
         onPointerMove={sendTouchEvent}
         onPointerUp={sendTouchEvent}
         onPointerCancel={sendTouchEvent}
-        onPointerOut={sendTouchEvent}
 
-        style={{ height: height, width: width }}>
+        style={{
+          height: displayRect.height,
+          width: displayRect.width,
+          left: displayRect.left,
+          top: projectionTop + displayRect.top,
+        }}>
 
         <canvas
           ref={canvasRef}
           id="video"
-          style={
-
-            carplaySettings.paired && carplaySettings.dongle
-              ? { height: '100%', overflow: 'hidden' }
-              : { display: 'none' }
-          }
+          style={{
+            display: carplaySettings.paired && carplaySettings.dongle ? 'block' : 'none',
+            width: '100%',
+            height: '100%',
+          }}
         />
       </Stream>
-      <Overlay isVisible={content} navVisible={navBar} />
+      <Overlay
+        isVisible={content}
+        navVisible={navBar}
+        style={{ height, top: projectionTop }}
+      />
     </Container>
   )
 }

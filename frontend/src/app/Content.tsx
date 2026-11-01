@@ -1,20 +1,60 @@
-import { useState, useEffect, useRef, use } from 'react';
-import styled, { css, useTheme } from 'styled-components';
-import { Fade } from '../theme/styles/Effects';
+import { useState, useEffect, useRef } from 'react';
+import React from 'react';
+import styled, { css } from 'styled-components';
+import { Fade as FadeBase } from '@/theme/styles/Effects';
+const Fade = FadeBase as React.ComponentType<{ className?: string; fadeLength?: number; children?: React.ReactNode }>;
 
-import { APP } from '../store/Store';
+import { APP } from '@/store/Store';
 
 import Dashboard from './pages/dashboard/Dashboard';
+import Music from './pages/music/Music';
 import Carplay from './pages/carplay/Carplay';
 import Rearcam from './pages/rearcam/Rearcam';
 import Settings from './pages/settings/Settings';
-import NavBar from '../app/sidebars/NavBar';
-import SideBar from '../app/sidebars/SideBar';
-import TopBar from '../app/sidebars/TopBar';
+import CompactSettings from './pages/settings/CompactSettings';
+import NavBar from '@/app/sidebars/NavBar';
+import SideBar from '@/app/sidebars/SideBar';
+import TopBar from '@/app/sidebars/TopBar';
 import { io } from "socket.io-client";
-import { useNamespaces } from '../socket/Namespaces';
+import { useNamespaces } from '@/socket/Namespaces';
+import { isCompactViewport } from '@/app/helper/Layout';
 
-const MainContainer = styled.div`
+type SideBarsSettings = { topBarHeight: { value: number }; navBarHeight: { value: number } };
+type InterfaceSettings = { carplay: boolean; navBar: boolean; content: boolean };
+type AppBindings = { switch: { value: string } };
+
+interface MainContainerProps {
+  height: number;
+  width: number;
+  interfaceSettings: InterfaceSettings;
+  view: string;
+  sidebarSettings: SideBarsSettings;
+  contentPadding: number;
+}
+
+interface CardProps {
+  currentView: string;
+  carplayVisible: boolean;
+  minHeight: number;
+  maxHeight: number;
+  collapseLength: number;
+  stream: boolean;
+}
+
+interface PageProps {
+  $compact: boolean;
+}
+
+interface NavBlockerProps {
+  sidebarSettings: SideBarsSettings;
+  contentPadding: number;
+  isActive: boolean;
+  collapseLength: number;
+  minHeight: number;
+  maxHeight: number;
+}
+
+const MainContainer = styled.div<MainContainerProps>`
   position: absolute;
   top: 0;
   left: 0;
@@ -37,7 +77,7 @@ const MainContainer = styled.div`
   background: none;
 `;
 
-const Card = styled.div`
+const Card = styled.div<CardProps>`
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -73,17 +113,17 @@ const Card = styled.div`
   }
 `;
 
-const Page = styled.div`
+const Page = styled.div<PageProps>`
   position: relative;  
   flex: 1;
   display: flex;
   flex-direction: column;
-  border-radius: 7px;
+  border-radius: ${({ $compact }) => $compact ? '0' : '7px'};
   background: ${({ theme }) => theme.colors.gradients.gradient1};
   overflow: hidden;
 `;
 
-const NavBlocker = styled.div`
+const NavBlocker = styled.div<NavBlockerProps>`
   width: 100%;
   height: ${({ sidebarSettings, contentPadding, isActive }) =>
     isActive
@@ -99,7 +139,7 @@ const NavBlocker = styled.div`
 `;
 
 const Content = () => {
-  const viewMap = { Dashboard, Carplay, Rearcam, Settings };
+  const viewMap = { Dashboard, Music, Carplay, Rearcam, Settings };
 
   const appUpdate         = APP((state) => state.update);
   const keyStroke         = APP((state) => state.keyStroke);
@@ -107,23 +147,31 @@ const Content = () => {
   const pauseKeyBinds     = APP((state) => state.pauseKeyBinds);
 
   const startedUp         = APP((state) => state.system.startedUp);
-  const sidebarSettings   = APP((state) => state.settings.side_bars);
+  const sidebarSettings   = APP((state) => state.settings.side_bars as SideBarsSettings | undefined);
   const interfaceSettings = APP((state) => state.system.interface);
   const carplaySettings   = APP((state) => state.system.carplay);
-  const appBindings       = APP((state) => state.settings.app_bindings);
-  const contentPadding    = APP((state) => state.settings.general.contentPadding.value);
+  const projectionPhase   = APP((state) => state.system.carplay.phase);
+  const appBindings       = APP((state) => state.settings.app_bindings as AppBindings | undefined);
+  const configuredPadding = APP((state) => (state.settings.general as { contentPadding: { value: number } } | undefined)?.contentPadding?.value ?? 0);
   const view              = APP((state) => state.system.view);
+  const windowSize        = APP((state) => state.system.windowSize);
+  const compact           = isCompactViewport(windowSize);
+
+  const compactBars: SideBarsSettings = {
+    topBarHeight: { value: 0 },
+    navBarHeight: { value: 0 },
+  };
+  const resolvedBars = compact ? compactBars : (sidebarSettings ?? compactBars);
+  const contentPadding = compact ? 0 : configuredPadding;
 
   const socket = useNamespaces();
 
 
   const reverse           = APP((state) => state.system.reverse);
-  const reverseDelay      = APP((state) => state.settings.reverseCam.delay.value);
+  const reverseDelay      = APP((state) => (state.settings.reverseCam as { delay: { value: number } } | undefined)?.delay?.value ?? 2);
+  const rearcamEnabled    = APP((state) => (state.settings.reverseCam as { enabled?: { value: boolean } } | undefined)?.enabled?.value);
 
-  const theme = useTheme();
-
-  const cardPadding = 20;
-  const windowSize = { width: window.innerWidth, height: window.innerHeight };
+  const cardPadding = compact ? 0 : 20;
 
   const fadeLength = 200; //ms
   const collapseLength = 400; //ms
@@ -131,21 +179,22 @@ const Content = () => {
   const [currentView, setCurrentView] = useState(view);
 
   /* Swipe / Navbar states */
-  const [swipeStartY, setSwipeStartY] = useState(null);
+  const [swipeStartY, setSwipeStartY] = useState<number | null>(null);
   const [swipeDistance, setSwipeDistance] = useState(0);
   const [isHovering, setIsHovering] = useState(false);
-  const timerRef = useRef(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageSwitchHandledRef = useRef(false);
 
   // Reverse refs + timer (to exit from rearcam)
-  const previousView = useRef(null);
+  const previousView = useRef<string | null>(null);
   const reverseNavigated = useRef(false);
-  const exitTimerRef = useRef(null);
+  const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /* Socket connection for reverse camera */
   useEffect(() => {
     const sysChannel = io("ws://localhost:4001/sys", { transports: ["websocket"] });
 
-    const onReverse = (active) => {
+    const onReverse = (active: boolean) => {
       socket.log.emit(`[Frontend] Reverse: ${active}`);
       appUpdate((state) => {
         state.system.reverse = active;
@@ -180,7 +229,7 @@ const Content = () => {
 
     // Exit: wait before return
     if (view === 'Rearcam' && reverseNavigated.current && exitTimerRef.current === null) {
-      exitTimerRef.current = window.setTimeout(() => {
+      exitTimerRef.current = setTimeout(() => {
         appUpdate((state) => {
           state.system.view = previousView.current || 'Dashboard';
         });
@@ -219,7 +268,7 @@ const Content = () => {
       setFadePage('fade-in');
       appUpdate((state) => {
         state.system.interface.content = true;
-        state.system.interface.navBar = true;
+        state.system.interface.navBar = !compact;
       });
       return;
     }
@@ -228,7 +277,7 @@ const Content = () => {
       setFadePage('fade-in');
       appUpdate((state) => {
         state.system.interface.content = true;
-        state.system.interface.navBar = true;
+        state.system.interface.navBar = !compact;
       });
     } else if (view !== currentView) {
       setFadePage('fade-out');
@@ -237,44 +286,54 @@ const Content = () => {
         setFadePage('fade-in');
         appUpdate((state) => {
           state.system.interface.content = true;
-          state.system.interface.navBar = true;
+          state.system.interface.navBar = !compact;
         });
       }, fadeLength);
     }
-  }, [view, interfaceSettings.carplay, currentView, appUpdate, fadeLength]);
+  }, [view, interfaceSettings.carplay, currentView, appUpdate, fadeLength, compact]);
 
   /* Carplay connection effect */
   useEffect(() => {
-    if (carplaySettings.connected && carplaySettings.worker) {
+    // Keep the connection page visible until the decoder confirms an actual stream.
+    if (projectionPhase === 'streaming') {
       appUpdate((state) => { state.system.interface.carplay = true; });
     } else {
       appUpdate((state) => { state.system.interface.carplay = false; });
     }
-  }, [carplaySettings, appUpdate]);
+  }, [projectionPhase, appUpdate]);
 
   /* Auto-hide NavBar */
   useEffect(() => {
+    if (compact) {
+      if (interfaceSettings.navBar) {
+        appUpdate((state) => { state.system.interface.navBar = false; });
+      }
+      if (timerRef.current) clearTimeout(timerRef.current);
+      return;
+    }
+
     if (view === 'Settings') {
       appUpdate((state) => { state.system.interface.navBar = true; });
-      clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
       return;
     }
 
     if (interfaceSettings.navBar) {
-      clearTimeout(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
         appUpdate((state) => { state.system.interface.navBar = false; });
       }, 4000);
     }
 
-    return () => { clearTimeout(timerRef.current); };
-  }, [view, interfaceSettings.navBar, appUpdate]);
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, [compact, view, interfaceSettings.navBar, appUpdate]);
 
   /* Swipe detection handlers */
-  const handlePointerDown = (event) => {
+  const handlePointerDown = (event: React.MouseEvent | React.TouchEvent) => {
     if (view === 'Settings') return;
 
-    const clientY = event.clientY || event.touches?.[0]?.clientY;
+    const e = event as any;
+    const clientY: number = e.clientY || e.touches?.[0]?.clientY;
     setSwipeStartY(clientY);
 
     // Trigger navbar if click is in lower 10% of screen
@@ -283,18 +342,26 @@ const Content = () => {
     }
   };
 
-  const handlePointerMove = (event) => {
+  const handlePointerMove = (event: React.MouseEvent | React.TouchEvent) => {
     if (swipeStartY === null) return;
-    const currentY = event.clientY || event.touches?.[0]?.clientY;
+    const e = event as any;
+    const currentY: number = e.clientY || e.touches?.[0]?.clientY;
     const distance = swipeStartY - currentY; // swipe up = positive
     setSwipeDistance(distance);
     setIsHovering(distance > 0); // visual feedback
   };
 
   const handlePointerUp = () => {
-    const threshold = 100; // pixels to trigger navbar
+    const threshold = compact ? 45 : 100;
     if (swipeDistance > threshold) {
-      appUpdate((state) => { state.system.interface.navBar = true; });
+      if (compact) {
+        const compactViews = ['Dashboard', 'Music', 'Carplay', 'Settings'];
+        const currentIndex = compactViews.indexOf(view);
+        const nextIndex = (currentIndex + 1) % compactViews.length;
+        appUpdate((state) => { state.system.view = compactViews[nextIndex]; });
+      } else {
+        appUpdate((state) => { state.system.interface.navBar = true; });
+      }
     }
     setSwipeStartY(null);
     setSwipeDistance(0);
@@ -303,7 +370,7 @@ const Content = () => {
 
   /* Mouse hover detection for visual feedback */
   useEffect(() => {
-    const handleMouseMove = (event) => {
+    const handleMouseMove = (event: MouseEvent) => {
       const deadZone = 85; 
       setIsHovering(event.clientY > window.innerHeight * (deadZone / 100));
     };
@@ -315,23 +382,34 @@ const Content = () => {
   }, []);
 
   const renderView = () => {
-    const key = viewMap[currentView] ? currentView : 'Dashboard';
-    const Component = viewMap[key];
+    const vm = viewMap as Record<string, React.ComponentType>;
+    const key = vm[currentView] ? currentView : 'Dashboard';
+    const Component = vm[key];
     if (!Component) {
       console.error(`Component for view "${currentView}" is undefined.`);
       return null;
     }
+    if (key === 'Settings' && compact) return <CompactSettings />;
     return <Component />;
   };
 
   useEffect(() => {
-    appUpdate((state) => {
-      state.system.switch = appBindings.switch.value;
-    });
-  }, [appBindings.switch, appUpdate]);
+    if (appBindings?.switch?.value) {
+      appUpdate((state) => {
+        state.system.switch = appBindings!.switch.value;
+      });
+    }
+  }, [appBindings, appUpdate]);
+
+  const viewEnabled: Partial<Record<string, boolean>> = {
+    Rearcam: rearcamEnabled,
+  };
 
   const cycleView = () => {
-    const viewKeys = Object.keys(viewMap);
+    const viewKeys = (compact
+      ? ['Dashboard', 'Music', 'Carplay', 'Settings']
+      : Object.keys(viewMap)
+    ).filter((v) => viewEnabled[v] !== false);
     let currentIndex = viewKeys.indexOf(view);
     currentIndex = (currentIndex + 1) % viewKeys.length;
     appUpdate((state) => { state.system.view = viewKeys[currentIndex]; });
@@ -339,21 +417,26 @@ const Content = () => {
 
   // Listen for key strokes to switch views
   useEffect(() => {
-    if ( !pauseKeyBinds && keyStroke === switchPage ) {
-      console.log(pauseKeyBinds, keyStroke, switchPage)
+    if (!keyStroke) {
+      pageSwitchHandledRef.current = false;
+      return;
+    }
+    if (pageSwitchHandledRef.current) return;
+    if (!pauseKeyBinds && keyStroke === switchPage) {
+      pageSwitchHandledRef.current = true;
       cycleView();
     }
-  }, [keyStroke, pauseKeyBinds, switchPage]);
+  }, [keyStroke, pauseKeyBinds, switchPage, view]);
 
   return (
     <>
       {startedUp && (
         <>
-          {<TopBar />}
-          <NavBar isHovering={isHovering} swipeProgress={Math.min(swipeDistance / 100, 1)} />
+          {!compact && <TopBar />}
+          {!compact && <NavBar isHovering={isHovering} swipeProgress={Math.min(swipeDistance / 100, 1)} />}
           <MainContainer
-            sidebarSettings={sidebarSettings}
-            interfaceSettings={interfaceSettings}
+            sidebarSettings={resolvedBars}
+            interfaceSettings={interfaceSettings as InterfaceSettings}
             view={view}
             contentPadding={contentPadding}
             height={windowSize.height}
@@ -365,29 +448,29 @@ const Content = () => {
             onTouchMove={handlePointerMove}
             onTouchEnd={handlePointerUp}
           >
-            <SideBar collapseLength={collapseLength} />
+            {!compact && <SideBar collapseLength={collapseLength} />}
             <Card
               stream={carplaySettings.connected}
-              theme={theme}
               currentView={view}
               carplayVisible={interfaceSettings.carplay}
-              maxHeight={windowSize.height - sidebarSettings.topBarHeight.value - cardPadding}
+              maxHeight={windowSize.height - resolvedBars.topBarHeight.value - cardPadding}
               minHeight={0}
               collapseLength={collapseLength / 1000}
             >
-              <Page theme={theme}>
+              <Page $compact={compact}>
                 <Fade className={fadePage} fadeLength={fadeLength / 1000}>
                   {renderView()}
                 </Fade>
-                <NavBlocker
-                  sidebarSettings={sidebarSettings}
-                  contentPadding={contentPadding}
-                  theme={theme}
-                  isActive={interfaceSettings.navBar}
-                  collapseLength={collapseLength / 1000}
-                  minHeight={0}
-                  maxHeight={sidebarSettings.navBarHeight.value - contentPadding}
-                />
+                {!compact && (
+                  <NavBlocker
+                    sidebarSettings={resolvedBars}
+                    contentPadding={contentPadding}
+                    isActive={interfaceSettings.navBar}
+                    collapseLength={collapseLength / 1000}
+                    minHeight={0}
+                    maxHeight={resolvedBars.navBarHeight.value - contentPadding}
+                  />
+                )}
               </Page>
             </Card>
           </MainContainer>

@@ -3,17 +3,20 @@ import os
 import time
 import subprocess
 import eventlet
+from eventlet import tpool
 
 #eventlet.monkey_patch()
 
-from flask                  import Flask, send_from_directory, render_template
+from flask                  import Flask, send_from_directory, render_template, jsonify
 from flask_socketio         import SocketIO
 from flask_cors             import CORS
 
 from .                      import settings
+from .media                 import media_api
 from .shared.shared_state   import shared_state
+from updater.releases       import UpdateError, commit_sha, get_release, installed_release, list_releases
 
-from .threads.cam         import CAMThread
+from .threads.cam         import CAMThread, CameraGPIO
 
 
 import logging
@@ -22,6 +25,7 @@ logger = logging.getLogger('vlink')
 # Flask configuration
 server = Flask(__name__, template_folder=os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist'), static_folder=os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist', 'assets'), static_url_path='/assets')
 server.config['SECRET_KEY'] = 'v-link'
+server.register_blueprint(media_api)
 CORS(server, resources={r'/*': {'origins': '*'}})
 
 # Socket.io configuration
@@ -29,6 +33,10 @@ socketio = SocketIO(server, cors_allowed_origins='*', async_mode='eventlet')
 
 # List of supported modules
 modules = ['app', 'mmi', 'can', 'swc', 'adc', 'rti', 'mst', 'rearcam']
+
+
+def _valid_backlight_step(value):
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 16
 
 
 class ServerThread(threading.Thread):
@@ -123,6 +131,23 @@ class ServerThread(threading.Thread):
     def serve_index():
         return render_template('index.html')
 
+    @server.route('/api/releases')
+    def serve_releases():
+        try:
+            catalogue = tpool.execute(list_releases)
+            catalogue['installed'] = installed_release(os.path.join(os.path.dirname(__file__), '..'))
+            return jsonify(catalogue)
+        except UpdateError as error:
+            return jsonify({'error': str(error)}), 502
+
+    @server.route('/api/releases/<int:release_id>/commit')
+    def serve_release_commit(release_id):
+        try:
+            release = tpool.execute(get_release, release_id)
+            return jsonify({'commit': tpool.execute(commit_sha, release['tag_name'])})
+        except UpdateError as error:
+            return jsonify({'error': str(error)}), 502
+
     # Route to serve static files (js, css, etc.) from the 'dist/assets' folder
     @server.route('/assets/<path:filename>')
     def serve_assets(filename):
@@ -130,7 +155,7 @@ class ServerThread(threading.Thread):
         response.headers['Cross-Origin-Embedder-Policy'] = 'require-corp'
         response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
         return response
-    
+
     # Handle client connection
     @socketio.on('connect', namespace='/')
     def handle_connect():
@@ -159,6 +184,16 @@ class ServerThread(threading.Thread):
             # rearcam no usa settings; mantenemos la firma y no persistimos
             if module != "rearcam":
                 settings.save_settings(module, data)
+                if module == "app":
+                    try:
+                        manual = data.get('manual_backlight', {}).get('value')
+                        auto_enabled = data.get('auto_backlight', {}).get('autoOpen', {}).get('value')
+                        if _valid_backlight_step(manual):
+                            shared_state.backlight_manual = manual
+                        if isinstance(auto_enabled, bool):
+                            shared_state.backlight_auto_enabled = auto_enabled
+                    except Exception as e:
+                        logger.error(f'[Settings] Error updating backlight shared state from save: {e}')
 
         # Emit module settings
         def load_settings():
@@ -186,7 +221,7 @@ class ServerThread(threading.Thread):
             if module == "rearcam":
                 try:
                     if rearcam["drv"] is None:
-                        rearcam["drv"] = CameraGPIO(line=26, chip=0, active_high=True, logger=logger)
+                        rearcam["drv"] = CameraGPIO(line=26, active_high=True, logger=logger)
                     on = rearcam["drv"].toggle()
                     socketio.emit('state', on, namespace=namespace)
                     socketio.emit('camera/status', {'on': on}, namespace=namespace)
@@ -209,18 +244,38 @@ class ServerThread(threading.Thread):
         toggle_state.__name__   = f'handle_toggle_{module}'
         emit_data.__name__      = f'handle_data_{module}'
 
+        def backlight_update(data):
+            if module != "app":
+                return
+            if not isinstance(data, dict):
+                return
+            try:
+                if 'manual' in data and _valid_backlight_step(data['manual']):
+                    shared_state.backlight_manual = data['manual']
+                if 'auto_enabled' in data and isinstance(data['auto_enabled'], bool):
+                    shared_state.backlight_auto_enabled = data['auto_enabled']
+                logger.info(
+                    f"[Backlight] manual={shared_state.backlight_manual} "
+                    f"auto_enabled={shared_state.backlight_auto_enabled}"
+                )
+            except Exception as e:
+                logger.error(f'[Settings] Error updating backlight shared state: {e}')
+
+        backlight_update.__name__ = f'backlight_update_{module}'
+
         socketio.on_event('load', load_settings, namespace=namespace)
         socketio.on_event('save', save_settings, namespace=namespace)
         socketio.on_event('ping', emit_state, namespace=namespace)
         socketio.on_event('data', emit_data, namespace=namespace)
         socketio.on_event('toggle', toggle_state, namespace=namespace)
+        socketio.on_event('backlight:update', backlight_update, namespace=namespace)
 
         # ------- Eventos específicos para rearcam -------
         if module == "rearcam":
             def rearcam_mount(_payload=None):
                 try:
                     if rearcam["drv"] is None:
-                        rearcam["drv"] = CameraGPIO(line=26, chip=0, active_high=True, logger=logger)
+                        rearcam["drv"] = CameraGPIO(line=26, active_high=True, logger=logger)
                     rearcam["drv"].set(True)
                     on = rearcam["drv"].get()
                     socketio.emit('state', on, namespace=namespace)
@@ -233,7 +288,7 @@ class ServerThread(threading.Thread):
             def rearcam_unmount(_payload=None):
                 try:
                     if rearcam["drv"] is None:
-                        rearcam["drv"] = CameraGPIO(line=26, chip=0, active_high=True, logger=logger)
+                        rearcam["drv"] = CameraGPIO(line=26, active_high=True, logger=logger)
                     rearcam["drv"].set(False)
                     on = rearcam["drv"].get()
                     socketio.emit('state', on, namespace=namespace)
@@ -246,7 +301,7 @@ class ServerThread(threading.Thread):
             def rearcam_status(_payload=None):
                 try:
                     if rearcam["drv"] is None:
-                        rearcam["drv"] = CameraGPIO(line=26, chip=0, active_high=True, logger=logger)
+                        rearcam["drv"] = CameraGPIO(line=26, active_high=True, logger=logger)
                     on = bool(rearcam["drv"].get())
                     socketio.emit('camera/status', {'on': on}, namespace=namespace)
                 except Exception as e:
@@ -273,19 +328,11 @@ class ServerThread(threading.Thread):
     @socketio.on('request', namespace='/data')
     def handle_can_request():
         try:
-            request_timestamp = time.time()
-
-            # Limit output to 2 decimal places
-            data = {
-                k: round(v, 2) if isinstance(v, float) else v
-                for k, v in shared_state.car_data.items()
-            }
-
             payload = {
-                'timestamp': request_timestamp,
-                'data': data
+                'data':        shared_state.car_data['data'],
+                'pollingrate': shared_state.car_data['pollingrate'],
+                'timestamp':   shared_state.car_data['timestamp'],
             }
-
             socketio.emit('data', payload, namespace='/data')
         except Exception as e:
             logger.error(f'[Server] Error handling data request: {e}')
@@ -300,6 +347,9 @@ class ServerThread(threading.Thread):
             # Checks whether .config/v-link/ exists
             # Returns either true or an object with selectable profiles.
             result = settings.check_settings()
+            if result is True:
+                # Push the current (potentially migrated) settings
+                socketio.emit('settings', settings.load_settings('app'), namespace='/app')
             return result
         
         elif args == 'load':
@@ -335,10 +385,11 @@ class ServerThread(threading.Thread):
             settings.reset_settings()
             shared_state.restart_event.set()
 
-        elif args == 'rti':
-            # Toggles RTI and HDMI status
-            logger.info(f'[Server] Toggle RTI/HDMI')
-            shared_state.rtiStatus = not shared_state.rtiStatus
+        elif args in ('rti', 'rti_open', 'rti_close'):
+            # Auto-open is idempotent; the manual control remains a toggle.
+            requested_state = {'rti_open': True, 'rti_close': False}.get(args, not shared_state.rtiStatus)
+            logger.info('[Server] %s RTI/HDMI', 'Open' if requested_state else 'Close')
+            shared_state.rtiStatus = requested_state
             shared_state.hdmiStatus = shared_state.rtiStatus
 
             socketio.emit('state', shared_state.rtiStatus, namespace='/rti')
@@ -351,8 +402,7 @@ class ServerThread(threading.Thread):
             shared_state.exit_event.set()
 
         elif args == 'restart':
-            # Restarts the application (namely the frontend)
-            logger.info(f'[Server] Restart application')
+            logger.info('[Server] Restart application, browser and hardware')
             shared_state.restart_event.set()
 
         elif args == 'hdmi':
@@ -366,9 +416,17 @@ class ServerThread(threading.Thread):
             socketio.emit('reverse', shared_state.reverseStatus.is_set(), namespace="/sys")
 
         elif args == 'update':
-            # Updates the application
-            logger.info(f'[Server] Update Application')
+            release_id = payload.get('release_id') if isinstance(payload, dict) else None
+            try:
+                release = tpool.execute(get_release, release_id)
+            except UpdateError as error:
+                return {'ok': False, 'error': str(error)}
+            if shared_state.update_event.is_set() or shared_state.update:
+                return {'ok': False, 'error': 'An update is already in progress'}
+            logger.info(f"[Server] Installing release {release['tag_name']} ({release_id})")
+            shared_state.update_release_id = release_id
             shared_state.update_event.set()
+            return {'ok': True}
 
         elif args == 'ign':
             # Sends the current ignition status to the frontend
@@ -396,13 +454,13 @@ class ServerThread(threading.Thread):
 
     # Handle UI log messages
     @socketio.on('info', namespace='/log')
-    def handle_frontend_error(args):
-        logger.info(f'[Frontend] {args}')
+    def handle_frontend_info(*args):
+        logger.info(f'[Frontend] {" ".join(str(a) for a in args)}')
 
     @socketio.on('debug', namespace='/log')
-    def handle_frontend_error(args):
-        logger.debug(f'[Frontend] {args}')
+    def handle_frontend_debug(*args):
+        logger.debug(f'[Frontend] {" ".join(str(a) for a in args)}')
 
     @socketio.on('error', namespace='/log')
-    def handle_frontend_error(args):
-        logger.error(f'[Frontend] {args}')
+    def handle_frontend_error(*args):
+        logger.error(f'[Frontend] {" ".join(str(a) for a in args)}')

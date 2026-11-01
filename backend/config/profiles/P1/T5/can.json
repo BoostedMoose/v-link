@@ -16,7 +16,7 @@
             "channel": "can2",
             "is_extended": true,
             "bitrate": 500000,
-            "wait_for_ecu": false
+            "wait_for_ecu": true
         }
     ],
     "sensors": {
@@ -84,7 +84,7 @@
             "unit": "°C",
             "min_value": 0,
             "max_value": 150,
-            "limit_start": 100
+            "limit_start": 115
         },
         "voltage": {
             "interface": "can2",
@@ -101,7 +101,7 @@
             "target": "0x7A",
             "is_16bit": false,
             "priority": 3,
-            "scale": "((value * 1) / 10.611399)",
+            "scale": "(value * 1 / 10.611399)",
             "label": "Voltage",
             "unit": "V",
             "min_value": 0,
@@ -110,7 +110,7 @@
         },
         "lambda1": {
             "interface": "can2",
-            "enabled": false,
+            "enabled": true,
             "type": "diagnostic",
             "parameter": [
                 "0x10",
@@ -123,16 +123,16 @@
             "target": "0x7A",
             "is_16bit": true,
             "priority": 2,
-            "scale": "((value * 16.0) / 65536.0)",
+            "scale": "(value * 16.0 / 65536.0)",
             "label": "Lambda 1",
             "unit": "λ",
             "min_value": 0,
             "max_value": 2,
-            "limit_start": 2
+            "limit_start": 16
         },
         "lambda2": {
             "interface": "can2",
-            "enabled": false,
+            "enabled": true,
             "type": "diagnostic",
             "parameter": [
                 "0x10",
@@ -176,7 +176,7 @@
         },
         "speed": {
             "interface": "can2",
-            "enabled": false,
+            "enabled": true,
             "type": "diagnostic",
             "parameter": [
                 "0x10",
@@ -189,12 +189,234 @@
             "target": "0x7A",
             "is_16bit": true,
             "priority": 2,
-            "scale": "(value * 512) / 65536.0",
+            "scale": "(value * 512 / 65536.0)",
             "label": "Speed",
             "unit": "km/h",
             "min_value": 0,
             "max_value": 260,
             "limit_start": 240
+        },
+        "shorttermfueltrim": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x5B"
+            ],
+            "app_id": "stt",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 0.00003052)",
+            "label": "Fuel Trim Shortterm",
+            "unit": "",
+            "min_value": 0,
+            "max_value": 2,
+            "limit_start": 2
+        },
+        "longtermfueltrimidle": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x18",
+                "0x65"
+            ],
+            "app_id": "ltt",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 3072 / 65535.0)",
+            "label": "Fuel Trim Idle",
+            "unit": "",
+            "min_value": 0,
+            "max_value": 2,
+            "limit_start": 2
+        },
+        "longtermfueltrimload": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x5C"
+            ],
+            "app_id": "ltt",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 2 / 65535.0)",
+            "label": "Fuel Trim Load",
+            "unit": "",
+            "min_value": 0,
+            "max_value": 2,
+            "limit_start": 2
+        },
+        "massairflowraw": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0xAE"
+            ],
+            "app_id": "maf",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 0.1)",
+            "label": "MAF",
+            "unit": "kg/h",
+            "min_value": 0,
+            "max_value": 1600,
+            "limit_start": 1200
+        },
+        "massairflowfiltered": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x78"
+            ],
+            "app_id": "mff",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 0.1)",
+            "label": "MAF (Filtered)",
+            "unit": "kg/h",
+            "min_value": 0,
+            "max_value": 1600,
+            "limit_start": 1200
+        },
+        "ignitionretarding": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x19",
+                "0x0A"
+            ],
+            "app_id": "igr",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": false,
+            "priority": 2,
+            "scale": "(value * -0.75)",
+            "label": "Ignition Retarding",
+            "unit": "° CS",
+            "min_value": 0,
+            "max_value": 12,
+            "limit_start": 6
+        },
+        "exhaustgastemp": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0x82"
+            ],
+            "app_id": "egt",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "((value * 5 - 12800) / 256)",
+            "label": "Exhaust Gas Temp.",
+            "unit": "°C",
+            "min_value": 0,
+            "max_value": 1200,
+            "limit_start": 1000
+        },
+        "relativeaircharge": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x10",
+                "0xB5"
+            ],
+            "app_id": "rac",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 0.75 / 32)",
+            "label": "Rel. Air Charge",
+            "unit": "%",
+            "min_value": 0,
+            "max_value": 300,
+            "limit_start": 250
+        },
+        "desiredenginetorque": {
+            "interface": "can2",
+            "enabled": true,
+            "type": "diagnostic",
+            "parameter": [
+                "0x12",
+                "0xCB"
+            ],
+            "app_id": "det",
+            "req_id": "0x000FFFFE",
+            "rep_id": "0x00400021",
+            "action": "0xA6",
+            "target": "0x7A",
+            "is_16bit": true,
+            "priority": 2,
+            "scale": "(value * 100 / 65536)",
+            "label": "Desired Engine Torque",
+            "unit": "%",
+            "min_value": 0,
+            "max_value": 100,
+            "limit_start": 100
         }
-    }
+        
+    },
+    "signal_sensors": [
+        {
+            "key": "dashboard_brightness",
+            "label": "Dashboard Brightness",
+            "interface": "can2",
+            "enabled": true,
+            "can_id": "0x0100082C",
+            "byte_index": 0,
+            "mask": "0x0F",
+            "shift": 0,
+            "scale": "value + 1"
+        },
+        {
+            "key": "reverse",
+            "label": "Reverse Gear",
+            "interface": "can2",
+            "enabled": false,
+            "can_id": "0x00000000",
+            "byte_index": 0,
+            "bit_index": 0,
+            "invert": false
+        }
+    ]
 }

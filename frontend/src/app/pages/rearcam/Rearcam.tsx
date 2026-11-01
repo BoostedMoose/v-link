@@ -1,7 +1,17 @@
 import React, { useEffect, useRef, useState } from "react";
 import styled, { useTheme } from 'styled-components';
-import { useNamespaces } from "../../../socket/Namespaces";
-import { Typography } from "../../../theme/styles/Typography";
+import { useNamespaces } from "@/socket/Namespaces";
+import { Typography } from "@/theme/styles/Typography";
+import { APP } from "@/store/Store";
+
+type ReverseCamSettings = {
+  deviceSelectionMode?: { value: string };
+  deviceId?: { value: string };
+  deviceLabel?: { value: string };
+  videoWidth?: { value: number };
+  videoHeight?: { value: number };
+  videoFps?: { value: number };
+};
 
 const Container = styled.div`
   position: relative;
@@ -52,16 +62,18 @@ const CenterMsg = styled.div`
 export default function Rearcam() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const openingRef = useRef(false);
   const socket = useNamespaces();
 
   const Caption = Typography.Subtitle;
   const theme = useTheme();
+  const reverseCamSettings = APP((state) => state.settings.reverseCam as ReverseCamSettings | undefined);
 
   const [status, setStatus] =
     useState<"idle" | "opening" | "playing" | "error" | "denied">("idle");
   const [err, setErr] = useState("");
 
-  // Encender GPIO al entrar y apagar al salir
+  // Turn GPIO on when entering and off when leaving
   useEffect(() => {
     socket.cam.emit('mount');
     return () => {
@@ -69,7 +81,7 @@ export default function Rearcam() {
     };
   }, []);
 
-  // Texto inferior configurable
+  // Configurable bottom text
   const overlayText = "CHECK SURROUNDINGS";
 
   const stopStream = () => {
@@ -78,12 +90,52 @@ export default function Rearcam() {
     if (videoRef.current) videoRef.current.srcObject = null;
   };
 
-  const openDefaultCamera = async () => {
+  const buildVideoConstraints = async () => {
+    const constraints: MediaTrackConstraints = {};
+    const selectionMode = reverseCamSettings?.deviceSelectionMode?.value ?? "auto";
+    const deviceId = reverseCamSettings?.deviceId?.value ?? "";
+    const deviceLabel = reverseCamSettings?.deviceLabel?.value ?? "";
+    const width = Number(reverseCamSettings?.videoWidth?.value ?? 0);
+    const height = Number(reverseCamSettings?.videoHeight?.value ?? 0);
+    const fps = Number(reverseCamSettings?.videoFps?.value ?? 0);
+
+    if (Number.isFinite(width) && width > 0) constraints.width = { ideal: width };
+    if (Number.isFinite(height) && height > 0) constraints.height = { ideal: height };
+    if (Number.isFinite(fps) && fps > 0) constraints.frameRate = { ideal: fps };
+
+    if (selectionMode === "deviceId" && deviceId && deviceId !== "default") {
+      constraints.deviceId = { exact: deviceId };
+    } else if (selectionMode === "label" && deviceLabel && navigator?.mediaDevices?.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const match = devices.find(
+        (device) =>
+          device.kind === "videoinput" &&
+          device.label.toLowerCase().includes(deviceLabel.toLowerCase())
+      );
+      if (match?.deviceId) {
+        constraints.deviceId = { exact: match.deviceId };
+      }
+    }
+
+    return constraints;
+  };
+
+  const openCamera = async () => {
+    if (openingRef.current) return;
+    openingRef.current = true;
     setStatus("opening"); setErr("");
     try {
       stopStream();
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error("Media devices API not available");
+      }
+
+      const constraints = await buildVideoConstraints();
+      const videoConstraint =
+        Object.keys(constraints).length > 0 ? constraints : true;
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: videoConstraint,
         audio: false,
       });
       streamRef.current = stream;
@@ -95,23 +147,31 @@ export default function Rearcam() {
     } catch (e: any) {
       setStatus(e?.name === "NotAllowedError" ? "denied" : "error");
       setErr(e?.message || "Failed to open camera");
+    } finally {
+      openingRef.current = false;
     }
   };
 
-  // Auto-inicio al entrar
+  // Auto-start on enter
   useEffect(() => {
-    openDefaultCamera();
+    openCamera();
     return () => { stopStream(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [
+    reverseCamSettings?.deviceSelectionMode?.value,
+    reverseCamSettings?.deviceId?.value,
+    reverseCamSettings?.deviceLabel?.value,
+    reverseCamSettings?.videoWidth?.value,
+    reverseCamSettings?.videoHeight?.value,
+    reverseCamSettings?.videoFps?.value,
+  ]);
 
-  // Reintento si se conecta/desconecta el grabber
+  // Retry when the capture device connects/disconnects
   useEffect(() => {
     const h = async () => {
-      if (status === "playing") {
-        await openDefaultCamera();
-      }
+      if (status !== "opening" && status !== "denied") await openCamera();
     };
+    if (!navigator?.mediaDevices?.addEventListener) return;
     navigator.mediaDevices.addEventListener("devicechange", h);
     return () => navigator.mediaDevices.removeEventListener("devicechange", h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,10 +187,10 @@ export default function Rearcam() {
         alt="Rear camera guidelines"
       />
 
-      {/* Texto inferior */}
+      {/* Bottom text */}
       <Caption style= {{position:'absolute', bottom:'0', left:'0', right:'0', textAlign:'center', zIndex: 5}}>{overlayText}</Caption>
 
-      {/* Mensajes de error */}
+      {/* Error messages */}
       {status === "error" && <CenterMsg>Error: {err}</CenterMsg>}
       {status === "denied" && (
         <CenterMsg>Camera access denied. Check browser permissions.</CenterMsg>

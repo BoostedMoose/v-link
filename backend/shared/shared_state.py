@@ -1,13 +1,17 @@
 # shared_state.py
 
 import threading
-
 from threading import Lock
+import time
 
 class SharedState:
     def __init__(self):
         #Global Variables
-        self.car_data = {}
+        self.car_data = {
+            'data': {},
+            'pollingrate': {},
+            'timestamp': None,
+        }
         self.car_data_lock = Lock()
 
         #Hardware
@@ -26,10 +30,17 @@ class SharedState:
 
         #Display
         self.isKiosk = True
+        self.browserWindowSize = (1280, 720)
         self.rtiStatus = False
         self.hdmiStatus = False
 
         self.update = False
+        self.update_release_id = None
+
+        # Backlight settings (runtime). None means "not initialized yet".
+        self.backlight_manual = None
+        self.backlight_auto_enabled = None
+        self.backlight_byte = None
 
         #Thread States:
         self.toggle_app = threading.Event()
@@ -74,7 +85,12 @@ class SharedState:
 
     def update_car_data(self, key, value):
         with self.car_data_lock:
-            self.car_data[key] = value
+            self.car_data['data'][key] = f"{value:.2f}" if isinstance(value, float) else value
+            self.car_data['timestamp'] = f"{time.monotonic():.3f}".replace('.', ',')
+
+    def update_polling_rate(self, polling_rate: dict):
+        with self.car_data_lock:
+            self.car_data['pollingrate'] = polling_rate
 
 
 shared_state = SharedState()
