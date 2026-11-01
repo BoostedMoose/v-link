@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
@@ -31,7 +31,7 @@ cp -a frontend/dist "$STAGE/package/frontend/dist"
 cp frontend/package.json "$STAGE/package/frontend/package.json"
 cp -a backend "$STAGE/package/backend"
 cp -a updater "$STAGE/package/updater"
-cp V-Link.py requirements.txt Update.sh "$STAGE/package/"
+cp V-Link.py Hardware-Test.py requirements.txt Update.sh "$STAGE/package/"
 cp Install.sh Uninstall.sh Update.sh "$STAGE/assets/"
 find "$STAGE/package" -type d -name __pycache__ -prune -exec rm -rf {} +
 find "$STAGE/package" -type f -name '*.pyc' -delete
@@ -48,7 +48,7 @@ with open(destination, "w", encoding="utf-8") as output:
     output.write("\n")
 PY
 
-(cd "$STAGE/package" && zip -qr "$STAGE/assets/V-Link.zip" V-Link.py requirements.txt Update.sh updater frontend backend .vlink-release.json)
+(cd "$STAGE/package" && zip -qr "$STAGE/assets/V-Link.zip" V-Link.py Hardware-Test.py requirements.txt Update.sh updater frontend backend .vlink-release.json)
 rm -rf dist
 mv "$STAGE/assets" dist
 echo "Created release assets from $COMMIT:"

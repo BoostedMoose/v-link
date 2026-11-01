@@ -6,6 +6,7 @@ block is skipped and only the helper functions / globals are available.
 """
 
 import importlib.util
+import builtins
 import logging
 import re
 import sys
@@ -57,6 +58,61 @@ def _load_vlink():
 
 
 _vmod = _load_vlink()
+
+
+def _simulation_startup(monkeypatch, module, enabled):
+    from backend import settings
+
+    monkeypatch.setattr(module, 'logger', MagicMock())
+    monkeypatch.setattr(settings, 'load_modules', MagicMock())
+    monkeypatch.setattr(module.time, 'sleep', MagicMock())
+    for flag in ('pimost', 'canModule', 'rtiModule', 'adcModule', 'swcModule'):
+        monkeypatch.setattr(module.shared_state, flag, False)
+    monkeypatch.setattr(module.shared_state, 'vCan', enabled)
+    instance = module.VLINK()
+    monkeypatch.setattr(instance, 'start_thread', MagicMock())
+    monkeypatch.setattr(module, 'vlink', instance, raising=False)
+    return instance
+
+
+def test_normal_startup_works_without_development_tools(monkeypatch):
+    original_import = builtins.__import__
+
+    def without_development(name, *args, **kwargs):
+        if name == 'development' or name.startswith('development.'):
+            raise ModuleNotFoundError(name=name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', without_development)
+    module = _load_vlink()
+    instance = _simulation_startup(monkeypatch, module, False)
+    instance.start_modules()
+    assert 'vcan' not in instance.threads
+    instance.start_thread.assert_any_call('cam', module.logger)
+
+
+def test_vcan_registers_simulator_from_development_folder(monkeypatch):
+    from development.vcan import VCANThread
+
+    instance = _simulation_startup(monkeypatch, _vmod, True)
+    instance.start_modules()
+    assert instance.threads['vcan'] is VCANThread
+    instance.start_thread.assert_any_call('vcan', _vmod.logger)
+
+
+def test_vcan_explains_missing_development_tools(monkeypatch):
+    original_import = builtins.__import__
+
+    def without_development(name, *args, **kwargs):
+        if name == 'development.vcan':
+            raise ModuleNotFoundError(name='development')
+        return original_import(name, *args, **kwargs)
+
+    instance = _simulation_startup(monkeypatch, _vmod, True)
+    monkeypatch.setattr(builtins, '__import__', without_development)
+    with pytest.raises(RuntimeError, match='--vcan requires the development tools'):
+        instance.start_modules()
+    instance.start_thread.assert_not_called()
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

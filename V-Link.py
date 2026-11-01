@@ -64,8 +64,6 @@ from backend.version import VERSION
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from backend.dev.vcan            import VCANThread
-
 from backend.server              import ServerThread
 
 from backend.threads.mst         import MOSTThread
@@ -100,7 +98,6 @@ class VLINK:
             'swc':      SWCThread,
             'cam':      CAMThread,
           
-            'vcan':     VCANThread,
         }
 
         if shared_state.pimost:
@@ -147,6 +144,16 @@ class VLINK:
         settings.load_modules()
 
         if shared_state.vCan:
+            # Simulation tools are available in source checkouts, not release ZIPs.
+            try:
+                from development.vcan import VCANThread
+            except ModuleNotFoundError as error:
+                if error.name not in ('development', 'development.vcan'):
+                    raise
+                raise RuntimeError(
+                    '--vcan requires the development tools from a V-Link source checkout.'
+                ) from error
+            self.threads['vcan'] = VCANThread
             self.start_thread('vcan', logger)
             time.sleep(.05)
 

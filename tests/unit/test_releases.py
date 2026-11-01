@@ -102,6 +102,26 @@ def test_manifest_mismatch_never_removes_installed_app(tmp_path, monkeypatch):
     assert (app / "V-Link.py").read_text() == "old app"
 
 
+@pytest.mark.parametrize("previous, incoming, expected", [
+    (None, "new test", "new test"),
+    ("old test", "new test", "new test"),
+    ("old test", None, "old test"),
+])
+def test_hardware_test_install_and_update(tmp_path, previous, incoming, expected):
+    app = tmp_path / "app"
+    stage = tmp_path / "stage"
+    app.mkdir()
+    stage.mkdir()
+    if previous is not None:
+        (app / "Hardware-Test.py").write_text(previous)
+    if incoming is not None:
+        (stage / "Hardware-Test.py").write_text(incoming)
+
+    releases._replace(stage, app, {"commit": SHA})
+
+    assert (app / "Hardware-Test.py").read_text() == expected
+
+
 def test_file_swap_failure_restores_previous_app(tmp_path, monkeypatch):
     app = tmp_path / "app"
     app.mkdir()
