@@ -14,6 +14,8 @@ Replace the SSH destination with your Pi username and hostname or an existing SS
 
 The helper checks local Python syntax, syncs the sources, checks syntax using the Pi's virtual environment, and asks the running app to restart through its existing Socket.IO handler. It uses one SSH connection for the transfers and restart. The frontend reverse SSH tunnel can remain running independently.
 
+The helper prints each stage as it starts. SSH connection setup times out after 10 seconds; preflight and remote validation/restart commands each have a 60-second limit. Transfers time out after 60 seconds without rsync I/O or five minutes total per transfer. If it stops at `Connecting to ...`, check `ssh pi-user@pi-host` directly. A `Connection timed out during banner exchange` error means SSH did not complete its initial handshake; check the Pi's SSH service and network connection.
+
 Requirements:
 
 - `ssh` and `rsync` on the development computer; `rsync` and Python 3 on the Pi.

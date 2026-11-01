@@ -74,6 +74,67 @@ class DevelopmentSyncTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
 
     @patch.object(sync.subprocess, "run")
+    def test_preflight_timeout_reports_progress_and_prevents_transfers(self, run):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            def stalled_preflight(command, **kwargs):
+                self.assertIn("Connecting to pi@pi-host", output.getvalue())
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+            run.side_effect = stalled_preflight
+            with self.assertRaisesRegex(RuntimeError, "Pi preflight timed out.*no sources were transferred"):
+                self.run_sync()
+        run.assert_called_once()
+
+    @patch.object(sync.subprocess, "run")
+    def test_transfer_timeout_prevents_restart(self, run):
+        run.side_effect = [self.result(["ssh"]), subprocess.TimeoutExpired(["rsync"], sync.TRANSFER_TIMEOUT)]
+        with self.assertRaisesRegex(RuntimeError, "Transfer of backend/ timed out.*no restart was requested"):
+            self.run_sync()
+        self.assertEqual(run.call_count, 2)
+
+    @patch.object(sync.subprocess, "run")
+    def test_validation_timeout_reports_that_files_were_synced(self, run):
+        run.side_effect = [
+            self.result(["ssh"]), *[self.result(["rsync"]) for _ in range(5)],
+            subprocess.TimeoutExpired(["ssh"], sync.REMOTE_COMMAND_TIMEOUT),
+        ]
+        with self.assertRaisesRegex(RuntimeError, "Sources were synced.*a restart may already have been requested"):
+            self.run_sync()
+        self.assertEqual(run.call_count, 7)
+
+    @patch.object(sync.subprocess, "run")
+    def test_remote_commands_and_transfers_have_timeouts_and_ssh_keepalives(self, run):
+        run.side_effect = self.result
+        self.run_sync()
+        for call in run.call_args_list:
+            command = call.args[0]
+            if command[0] == "rsync":
+                self.assertEqual(call.kwargs["timeout"], sync.TRANSFER_TIMEOUT)
+                self.assertIn("--timeout=60", command)
+                ssh = shlex.split(command[command.index("-e") + 1])
+            else:
+                self.assertEqual(call.kwargs["timeout"], sync.REMOTE_COMMAND_TIMEOUT)
+                ssh = command
+            for option in ("ConnectTimeout=10", "ConnectionAttempts=1", "ServerAliveInterval=10", "ServerAliveCountMax=3"):
+                self.assertIn(option, ssh)
+
+    @patch.object(sync.subprocess, "run")
+    def test_cleanup_timeout_does_not_mask_preflight_timeout(self, run):
+        def stalled_connection(command, **kwargs):
+            if "ControlMaster=auto" in command:
+                control_path = next(option.split("=", 1)[1] for option in command if option.startswith("ControlPath="))
+                Path(control_path).touch()
+            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+        run.side_effect = stalled_connection
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            with self.assertRaisesRegex(RuntimeError, "Pi preflight timed out"):
+                self.run_sync()
+        self.assertIn("could not close", errors.getvalue())
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args.kwargs["timeout"], 5)
+
+    @patch.object(sync.subprocess, "run")
     def test_invalid_local_python_prevents_all_remote_commands(self, run):
         (self.root / "backend" / "server.py").write_text("def broken(:\n")
         with self.assertRaises(SyntaxError):

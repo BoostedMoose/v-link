@@ -18,6 +18,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIRECTORIES = ("backend", "updater")
 ROOT_FILES = ("V-Link.py", "requirements.txt")
 SIMULATION_FILES = ("development/__init__.py", "development/vcan.py", "development/setup-vcan.sh")
+SSH_CONNECT_TIMEOUT = 10
+REMOTE_COMMAND_TIMEOUT = 60
+TRANSFER_TIMEOUT = 300
 
 INSPECT_REMOTE = """
 import hashlib
@@ -115,7 +118,7 @@ def rsync_commands(
     target: str, remote_root: str, ssh: list[str], *, dry_run: bool = False
 ) -> list[list[str]]:
     common = [
-        "rsync", "-az", "--itemize-changes", "--delay-updates", "--protect-args",
+        "rsync", "-az", "--itemize-changes", "--delay-updates", "--protect-args", "--timeout=60",
         "--exclude=__pycache__/", "--exclude=*.py[co]", "-e", shlex.join(ssh),
     ]
     if dry_run:
@@ -140,6 +143,7 @@ def sync_backend(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> None:
     for program in ("ssh", "rsync"):
         if shutil.which(program) is None:
             raise RuntimeError(f"{program} is not installed or not in PATH; install it on the development computer")
+    print("Checking local Python syntax...", flush=True)
     validate_local_sources(root)
     requirements_hash = hashlib.sha256((root / "requirements.txt").read_bytes()).hexdigest()
 
@@ -150,8 +154,11 @@ def sync_backend(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> None:
         ssh = [
             "ssh", "-o", "ControlMaster=auto", "-o", "ControlPersist=60",
             "-o", f"ControlPath={control_path}",
+            "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT}", "-o", "ConnectionAttempts=1",
+            "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
         ]
         try:
+            print(f"Connecting to {args.target} and checking the Pi installation...", flush=True)
             inspection = [
                 "python3", "-", args.remote_dir,
                 "check" if args.no_restart or args.dry_run else "restart", requirements_hash,
@@ -160,7 +167,13 @@ def sync_backend(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> None:
                 inspected = subprocess.run(
                     [*ssh, args.target, shlex.join(inspection)],
                     input=INSPECT_REMOTE, text=True, stdout=subprocess.PIPE, check=True,
+                    timeout=REMOTE_COMMAND_TIMEOUT,
                 )
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(
+                    f"Pi preflight timed out after {REMOTE_COMMAND_TIMEOUT} seconds; no sources were transferred. "
+                    f"Check the Pi's SSH connection with: ssh {args.target}"
+                ) from error
             except subprocess.CalledProcessError as error:
                 raise RuntimeError("Pi preflight failed; no sources were transferred. See the message above.") from error
             remote = json.loads(inspected.stdout)
@@ -170,18 +183,36 @@ def sync_backend(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> None:
             requirements_changed = requirements_hash != remote["requirements"]
             print(f"{'Previewing' if args.dry_run else 'Syncing'} backend sources to {args.target}:{remote_root}", flush=True)
             for command in rsync_commands(args.target, remote_root, ssh, dry_run=args.dry_run):
-                subprocess.run(command, cwd=root, check=True)
+                sources = " ".join(command[command.index("--") + 1:-1])
+                print(f"{'Previewing' if args.dry_run else 'Transferring'} {sources}...", flush=True)
+                try:
+                    subprocess.run(command, cwd=root, check=True, timeout=TRANSFER_TIMEOUT)
+                except subprocess.TimeoutExpired as error:
+                    raise RuntimeError(
+                        f"Transfer of {sources} timed out after {TRANSFER_TIMEOUT} seconds. "
+                        "Some files may have been synced; no restart was requested. Check SSH and rerun the sync."
+                    ) from error
             if args.dry_run:
                 print("Dry run complete; no files changed and no restart requested.")
                 return
 
             restart = not args.no_restart and not requirements_changed
             command = [f"{remote_root}/venv/bin/python", "-", remote_root, "restart" if restart else "check"]
+            print(
+                "Validating Python on the Pi" + (" and requesting restart..." if restart else "..."),
+                flush=True,
+            )
             try:
                 subprocess.run(
                     [*ssh, args.target, shlex.join(command)],
                     input=VALIDATE_AND_RESTART, text=True, check=True,
+                    timeout=REMOTE_COMMAND_TIMEOUT,
                 )
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(
+                    f"Sources were synced, but Pi validation or restart timed out after {REMOTE_COMMAND_TIMEOUT} seconds. "
+                    "Check the Pi app terminal before retrying; a restart may already have been requested."
+                ) from error
             except subprocess.CalledProcessError as error:
                 raise RuntimeError(
                     "Sources were synced, but validation or restart failed. Check the Pi message above."
@@ -198,10 +229,14 @@ def sync_backend(args: argparse.Namespace, root: Path = PROJECT_ROOT) -> None:
                 print("Sync complete. Start or restart V-Link on the Pi to load the changes.")
         finally:
             if Path(control_path).exists():
-                subprocess.run(
-                    ["ssh", "-S", control_path, "-O", "exit", args.target],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-                )
+                print("Closing the sync SSH connection...", flush=True)
+                try:
+                    subprocess.run(
+                        ["ssh", "-S", control_path, "-O", "exit", args.target],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=5,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    print("Warning: could not close the sync SSH connection promptly.", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
