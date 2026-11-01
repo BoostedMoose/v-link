@@ -355,7 +355,7 @@ const Content = () => {
     const threshold = compact ? 45 : 100;
     if (swipeDistance > threshold) {
       if (compact) {
-        const compactViews = ['Dashboard', 'Carplay', 'Settings'];
+        const compactViews = ['Dashboard', 'Music', 'Carplay', 'Settings'];
         const currentIndex = compactViews.indexOf(view);
         const nextIndex = (currentIndex + 1) % compactViews.length;
         appUpdate((state) => { state.system.view = compactViews[nextIndex]; });
@@ -407,7 +407,7 @@ const Content = () => {
 
   const cycleView = () => {
     const viewKeys = (compact
-      ? ['Dashboard', 'Carplay', 'Settings']
+      ? ['Dashboard', 'Music', 'Carplay', 'Settings']
       : Object.keys(viewMap)
     ).filter((v) => viewEnabled[v] !== false);
     let currentIndex = viewKeys.indexOf(view);

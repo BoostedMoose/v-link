@@ -108,6 +108,21 @@ describe('CompactSettings controls', () => {
     expect(appStore.getState().system.view).toBe('Carplay');
   });
 
+  it('opens Audio using touch or the configured key controls', () => {
+    renderSettings();
+    const audio = screen.getByRole('button', { name: 'AUDIO' });
+    fireEvent.click(audio);
+    expect(appStore.getState().system.view).toBe('Music');
+
+    act(() => appStore.setState({ keyStroke: 'ArrowRight' }));
+    act(() => appStore.setState({ keyStroke: '' }));
+    act(() => appStore.setState({ keyStroke: 'ArrowRight' }));
+    expect(audio).toHaveAttribute('aria-current', 'true');
+    act(() => appStore.setState({ keyStroke: '' }));
+    act(() => appStore.setState({ keyStroke: 'Space' }));
+    expect(appStore.getState().system.view).toBe('Music');
+  });
+
   it('opens a compact display page and changes brightness with key controls', () => {
     vi.useFakeTimers();
     appStore.getState().update((state: any) => { state.settings.constants.modules.rti = true; });
@@ -137,6 +152,8 @@ describe('CompactSettings controls', () => {
     appStore.getState().update((state: any) => { state.settings.constants.modules.rti = true; });
     renderSettings();
 
+    act(() => appStore.setState({ keyStroke: 'ArrowRight' }));
+    act(() => appStore.setState({ keyStroke: '' }));
     act(() => appStore.setState({ keyStroke: 'ArrowRight' }));
     act(() => appStore.setState({ keyStroke: '' }));
     act(() => appStore.setState({ keyStroke: 'ArrowRight' }));

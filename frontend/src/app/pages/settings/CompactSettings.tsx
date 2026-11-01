@@ -102,7 +102,7 @@ const CompactSettings = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [page, setPage] = useState<'menu' | 'display'>('menu');
 
-  const navigate = useCallback((view: 'Dashboard' | 'Carplay') => {
+  const navigate = useCallback((view: 'Dashboard' | 'Carplay' | 'Music') => {
     appUpdate((state) => {
       state.system.view = view;
     });
@@ -124,6 +124,7 @@ const CompactSettings = () => {
     const items: CompactAction[] = [
       { id: 'dashboard', label: 'DASHBOARD', icon: 'dashboard', run: () => navigate('Dashboard') },
       { id: 'carplay', label: 'CARPLAY', icon: 'carplay', run: () => navigate('Carplay') },
+      { id: 'audio', label: 'AUDIO', icon: 'music', run: () => navigate('Music') },
     ];
 
     if (rtiEnabled && brightnessSupported) {
