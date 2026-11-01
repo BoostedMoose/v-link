@@ -89,7 +89,7 @@
       "label": "Call Volume"
     },
     "navigationDuckingAmount": {
-      "value": 80,
+      "value": 25,
       "label": "Navigation Ducking Intensity"
     },
     "microphoneGainDb": {
