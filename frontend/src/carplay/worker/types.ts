@@ -12,6 +12,7 @@ export type CarplayWorkerMessage =
   | { data: CarplayMessage }
   | { data: { type: 'requestBuffer'; message: AudioData } }
   | { data: { type: 'workerStarted' } }
+  | { data: { type: 'driverHealthy' } }
   | { data: { type: 'failure'; message?: string } }
   | { data: { type: 'videoStats'; count: number; bytes: number } }
   | { data: { type: 'diagnostic'; message: string } }
@@ -30,6 +31,8 @@ export type AudioPlayerPayload = {
 
 export type StartPayload = {
   config: Partial<DongleConfig>
+  androidAutoSize: { width: number; height: number }
+  resetDevice?: boolean
 }
 
 export type KeyCommand = string

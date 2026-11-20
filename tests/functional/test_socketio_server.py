@@ -13,6 +13,50 @@ from pathlib import Path
 
 import pytest
 
+
+def test_restart_requests_full_application_restart(monkeypatch):
+    from backend.server import server, socketio
+    from backend.shared.shared_state import shared_state
+    import threading
+
+    restart_event = threading.Event()
+    monkeypatch.setattr(shared_state, 'restart_event', restart_event)
+    monkeypatch.setattr(shared_state, 'rtiStatus', True)
+    client = socketio.test_client(server, namespace='/sys')
+    try:
+        client.get_received('/sys')
+        client.emit('systemTask', 'restart', namespace='/sys')
+        assert restart_event.is_set()
+        assert shared_state.rtiStatus is True
+        assert not any(event['name'] == 'restartProjection' for event in client.get_received('/sys'))
+    finally:
+        client.disconnect(namespace='/sys')
+
+
+def test_rti_explicit_open_close_are_idempotent_and_toggle_is_preserved(monkeypatch):
+    from backend.server import server, socketio
+    from backend.shared.shared_state import shared_state
+
+    monkeypatch.setattr(shared_state, 'rtiStatus', False)
+    monkeypatch.setattr(shared_state, 'hdmiStatus', False)
+    monkeypatch.setattr(shared_state, 'dev', True)
+    client = socketio.test_client(server, namespace='/sys')
+    try:
+        for _ in range(2):
+            client.emit('systemTask', 'rti_open', namespace='/sys')
+            assert shared_state.rtiStatus is True
+            assert shared_state.hdmiStatus is True
+        for _ in range(2):
+            client.emit('systemTask', 'rti_close', namespace='/sys')
+            assert shared_state.rtiStatus is False
+            assert shared_state.hdmiStatus is False
+        client.emit('systemTask', 'rti', namespace='/sys')
+        assert shared_state.rtiStatus is True
+        client.emit('systemTask', 'rti', namespace='/sys')
+        assert shared_state.rtiStatus is False
+    finally:
+        client.disconnect(namespace='/sys')
+
 _APP_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -107,6 +151,28 @@ def test_app_ping_emits_state_bool(seeded_config_dir):
         assert len(state_events) == 1
         assert isinstance(state_events[0]['args'][0], bool)
     finally:
+        client.disconnect(namespace='/app')
+
+
+def test_backlight_update_applies_valid_values_and_rejects_invalid_values(seeded_config_dir):
+    from backend.server import server, socketio
+    from backend.shared.shared_state import shared_state
+    server.config['TESTING'] = True
+    shared_state.backlight_manual = 5
+    shared_state.backlight_auto_enabled = True
+
+    client = socketio.test_client(server, namespace='/app')
+    try:
+        client.emit('backlight:update', {'manual': 9, 'auto_enabled': False}, namespace='/app')
+        assert shared_state.backlight_manual == 9
+        assert shared_state.backlight_auto_enabled is False
+
+        client.emit('backlight:update', {'manual': 17, 'auto_enabled': 'false'}, namespace='/app')
+        assert shared_state.backlight_manual == 9
+        assert shared_state.backlight_auto_enabled is False
+    finally:
+        shared_state.backlight_manual = None
+        shared_state.backlight_auto_enabled = None
         client.disconnect(namespace='/app')
 
 

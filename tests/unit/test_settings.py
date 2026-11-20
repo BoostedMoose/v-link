@@ -185,9 +185,8 @@ def test_migrate_settings_adds_backlight_keys_to_old_config(tmp_path, monkeypatc
     user_dir.mkdir()
 
     backlight_defaults = {
-        'daylight_backlight': {'ui': 'range', 'label': 'Daylight Backlight Level', 'value': 15, 'min': 1, 'max': 16, 'step': 1},
-        'auto_backlight': {'title': 'Automatic Backlight', 'type': 'system', 'autoOpen': {'value': True, 'label': 'Enable Automatic Backlight'}},
-        'darkness_backlight': {'ui': 'range', 'label': 'Darkness Backlight Level', 'value': 5, 'min': 1, 'max': 10, 'step': 1},
+        'manual_backlight': {'ui': 'range', 'label': 'Manual / Fallback Brightness Level', 'value': 15, 'min': 1, 'max': 16, 'step': 1},
+        'auto_backlight': {'title': 'Brightness Mode', 'type': 'system', 'autoOpen': {'value': True, 'label': 'Follow Dashboard (requires HS CAN)'}},
     }
     default_app = {'general': {'colorTheme': {'value': 'Green'}}, **backlight_defaults}
     user_app   = {'general': {'colorTheme': {'value': 'Red'}}}   # old config, no backlight keys
@@ -201,9 +200,8 @@ def test_migrate_settings_adds_backlight_keys_to_old_config(tmp_path, monkeypatc
     settings.migrate_settings()
 
     result = settings.load_settings('app')
-    assert 'daylight_backlight' in result
+    assert 'manual_backlight' in result
     assert 'auto_backlight' in result
-    assert 'darkness_backlight' in result
     assert result['general']['colorTheme']['value'] == 'Red'   # user preference kept
 
 
@@ -301,7 +299,7 @@ def test_check_settings_migrates_on_existing_config(tmp_path, monkeypatch):
 
     default_app = {
         'constants': {'modules': {'can': False, 'rti': False, 'swc': False, 'adc': False}},
-        'daylight_backlight': {'ui': 'range', 'value': 15, 'min': 1, 'max': 16, 'step': 1},
+        'manual_backlight': {'ui': 'range', 'value': 15, 'min': 1, 'max': 16, 'step': 1},
     }
     user_app = {
         'constants': {'modules': {'can': False, 'rti': False, 'swc': False, 'adc': False}},
@@ -317,7 +315,7 @@ def test_check_settings_migrates_on_existing_config(tmp_path, monkeypatch):
 
     assert result is True
     migrated = settings.load_settings('app')
-    assert 'daylight_backlight' in migrated
+    assert 'manual_backlight' in migrated
 
 
 # load_modules

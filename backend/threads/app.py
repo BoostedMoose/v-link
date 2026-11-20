@@ -75,13 +75,12 @@ class APPThread(threading.Thread):
 
         if shared_state.isKiosk:
             mode = [
-                '--kiosk',
-                '--start-maximized'
+                '--kiosk'
             ]
         else:
+            window_width, window_height = shared_state.browserWindowSize
             mode = [
-                '--disable-resize',
-                '--window-size=1280,720'
+                f'--window-size={window_width},{window_height}'
             ]
 
         flags = standard_flags + mode
@@ -91,6 +90,7 @@ class APPThread(threading.Thread):
 
         self.browser = subprocess.Popen(
             command,
+            start_new_session=True,
             stdout=subprocess.DEVNULL,  # or subprocess.PIPE if you want logs
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL
@@ -102,19 +102,31 @@ class APPThread(threading.Thread):
     def close_browser(self):
         if self.browser:
             try:
-                # First, terminate the main browser process gracefully
-                self.browser.terminate()
+                # Chromium has its own process group. Target that group so USB
+                # utility processes cannot outlive the browser during restart.
+                try:
+                    os.killpg(self.browser.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
                 # Wait for the process to exit (timeout to avoid hanging)
                 try:
                     self.browser.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.logger.warning('[Browser] Chromium did not close in time; Trying to kill thread.')
-                    self.browser.kill()
+                    try:
+                        os.killpg(self.browser.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     self.browser.wait()
 
-                # Then kill any remaining child processes (optional safety)
-                subprocess.run(['pkill', '-P', str(self.browser.pid)], check=False)
+                # The parent may exit before its children; their process group
+                # remains addressable even after they have been reparented.
+                try:
+                    os.killpg(self.browser.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.browser = None
 
             except Exception as e:
                 self.logger.error(f'[Browser] Error stopping chromium: {e}')

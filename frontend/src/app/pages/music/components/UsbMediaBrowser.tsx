@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTheme } from 'styled-components';
 
-import { APP, useThemeColor } from '@/store/Store';
+import { useThemeColor } from '@/store/Store';
+import { useMediaNavigation } from '../useMediaNavigation';
 
 import {
   UsbBrowserActions,
@@ -30,11 +31,8 @@ const UsbMediaBrowser = ({ onClose, onTrackSelected }: UsbMediaBrowserProps) => 
   const [browserTitle, setBrowserTitle] = useState('Media locations');
   const [pathHistory, setPathHistory] = useState<string[]>([]);
   const [browserError, setBrowserError] = useState<string | null>(null);
-  const keyStroke = APP((state) => state.keyStroke);
-  const bindings = APP((state) => state.settings.dongle_bindings as Record<string, { value?: string }> | undefined);
   const [selectedTrack, setSelectedTrack] = useState(currentTrack ?? 0);
   const trackRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const handledStrokeRef = useRef(false);
 
   const chooseNativeFolder = useCallback(async () => {
     const loaded = await chooseFolder();
@@ -81,9 +79,14 @@ const UsbMediaBrowser = ({ onClose, onTrackSelected }: UsbMediaBrowserProps) => 
     if (pathHistory.length === 1) {
       setPathHistory([]);
       setBrowserTitle('Media locations');
+      setSelectedTrack(0);
       void fetch(`${MEDIA_API}/roots`).then(async (response) => {
+        if (!response.ok) throw new Error();
         const roots = await response.json() as Array<{ name: string; path: string }>;
         setBackendEntries(roots.map((root) => ({ ...root, kind: 'directory' })));
+        setBrowserError(roots.length ? null : 'No media locations are mounted.');
+      }).catch(() => {
+        setBrowserError('V-Link could not open media locations.');
       });
       return;
     }
@@ -103,28 +106,22 @@ const UsbMediaBrowser = ({ onClose, onTrackSelected }: UsbMediaBrowserProps) => 
 
   useEffect(() => {
     trackRefs.current[selectedTrack]?.scrollIntoView({ block: 'nearest' });
-  }, [selectedTrack]);
+  }, [backendEntries, selectedTrack, tracks]);
 
-  useEffect(() => {
-    if (!keyStroke) {
-      handledStrokeRef.current = false;
-      return;
-    }
-    if (handledStrokeRef.current) return;
-    handledStrokeRef.current = true;
-    if (keyStroke === bindings?.back?.value) {
-      onClose();
-    } else if (!backendEntries && !tracks.length && keyStroke === bindings?.selectDown?.value) {
+  useMediaNavigation((action) => {
+    if (action === 'back') {
+      goBack();
+    } else if (!backendEntries && !tracks.length && action === 'confirm') {
       void chooseNativeFolder();
     } else if (!(backendEntries?.length ?? tracks.length)) {
       return;
-    } else if (keyStroke === bindings?.left?.value) {
+    } else if (action === 'previous') {
       const count = backendEntries?.length ?? tracks.length;
       setSelectedTrack((current) => (current - 1 + count) % count);
-    } else if (keyStroke === bindings?.right?.value) {
+    } else if (action === 'next') {
       const count = backendEntries?.length ?? tracks.length;
       setSelectedTrack((current) => (current + 1) % count);
-    } else if (keyStroke === bindings?.selectDown?.value) {
+    } else if (action === 'confirm') {
       const entry = backendEntries?.[selectedTrack];
       if (!entry) {
         void playTrack(selectedTrack);
@@ -137,7 +134,7 @@ const UsbMediaBrowser = ({ onClose, onTrackSelected }: UsbMediaBrowserProps) => 
         onTrackSelected();
       }
     }
-  }, [backendEntries, bindings, browserTitle, chooseNativeFolder, keyStroke, loadBackendTracks, onClose, onTrackSelected, playTrack, selectedTrack, tracks.length]);
+  });
 
   const visibleEntries = backendEntries;
 
@@ -155,24 +152,27 @@ const UsbMediaBrowser = ({ onClose, onTrackSelected }: UsbMediaBrowserProps) => 
       </UsbBrowserHeader>
 
       {(browserError || error) && <UsbEmptyMessage>{browserError || error}</UsbEmptyMessage>}
-      {!error && tracks.length === 0 && <UsbEmptyMessage>Select a folder to view its music.</UsbEmptyMessage>}
+      {!error && !browserError && !(visibleEntries?.length ?? tracks.length) && <UsbEmptyMessage>Select a folder to view its music.</UsbEmptyMessage>}
 
       <UsbTrackList>
         {visibleEntries?.map((entry, index) => (
           <UsbTrackButton
+            ref={(element) => { trackRefs.current[index] = element; }}
             key={entry.path}
             type="button"
             $active={false}
             $focused={selectedTrack === index}
             $accent={accent}
+            onFocus={() => setSelectedTrack(index)}
             onClick={() => {
+              setSelectedTrack(index);
               if (entry.kind === 'directory') {
                 void openBackendDirectory(entry.path);
                 return;
               }
               const files = visibleEntries.filter((item) => item.kind === 'file');
-              const index = files.findIndex((item) => item.path === entry.path);
-              void loadBackendTracks(browserTitle, files, index);
+              const fileIndex = files.findIndex((item) => item.path === entry.path);
+              void loadBackendTracks(browserTitle, files, fileIndex);
               onTrackSelected();
             }}
           >
@@ -188,6 +188,7 @@ const UsbMediaBrowser = ({ onClose, onTrackSelected }: UsbMediaBrowserProps) => 
             $active={currentTrack === index}
             $focused={selectedTrack === index}
             $accent={accent}
+            onFocus={() => setSelectedTrack(index)}
             onClick={() => {
               setSelectedTrack(index);
               void playTrack(index);

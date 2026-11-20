@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useTheme } from 'styled-components';
 
-import { APP, useThemeColor } from '@/store/Store';
+import { useThemeColor } from '@/store/Store';
+import { useMediaNavigation } from '../useMediaNavigation';
 
 import {
   AlbumArt,
@@ -77,28 +78,19 @@ const NativePlayer = ({
   const themeColor = useThemeColor();
   const accent = theme.colors.theme[themeColor].active;
   const remaining = Math.max(duration - position, 0);
-  const keyStroke = APP((state) => state.keyStroke);
-  const bindings = APP((state) => state.settings.dongle_bindings as Record<string, { value?: string }> | undefined);
   const [focusedControl, setFocusedControl] = useState(2);
-  const handledStrokeRef = useRef(false);
 
-  useEffect(() => {
-    if (!keyStroke) {
-      handledStrokeRef.current = false;
-      return;
-    }
-    if (handledStrokeRef.current) return;
-    handledStrokeRef.current = true;
-    if (keyStroke === bindings?.left?.value) {
+  useMediaNavigation((action) => {
+    if (action === 'previous') {
       setFocusedControl((current) => (current - 1 + 5) % 5);
-    } else if (keyStroke === bindings?.right?.value) {
+    } else if (action === 'next') {
       setFocusedControl((current) => (current + 1) % 5);
-    } else if (keyStroke === bindings?.selectDown?.value) {
+    } else if (action === 'confirm') {
       [onToggleShuffle, onPrevious, onPlayPause, onNext, onCycleRepeat][focusedControl]();
-    } else if (keyStroke === bindings?.back?.value) {
+    } else if (action === 'back') {
       onBrowse();
     }
-  }, [bindings, focusedControl, keyStroke, onBrowse, onCycleRepeat, onNext, onPlayPause, onPrevious, onToggleShuffle]);
+  });
 
   return (
     <MusicPage>

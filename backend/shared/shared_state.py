@@ -30,14 +30,15 @@ class SharedState:
 
         #Display
         self.isKiosk = True
+        self.browserWindowSize = (1280, 720)
         self.rtiStatus = False
         self.hdmiStatus = False
 
         self.update = False
+        self.update_release_id = None
 
         # Backlight settings (runtime). None means "not initialized yet".
-        self.backlight_daylight = None
-        self.backlight_darkness = None
+        self.backlight_manual = None
         self.backlight_auto_enabled = None
         self.backlight_byte = None
 

@@ -9,6 +9,7 @@ class LgpioError(Exception):
 
 _pin_values: dict = {}
 _chips: dict = {}
+_chip_info: dict = {}
 
 
 def gpiochip_open(chip_id: int) -> int:
@@ -18,6 +19,10 @@ def gpiochip_open(chip_id: int) -> int:
 
 def gpiochip_close(handle: int) -> None:
     _chips.pop(handle, None)
+
+
+def gpio_get_chip_info(handle: int):
+    return _chip_info.get(handle, (0, 54, f'gpiochip{handle}', 'pinctrl-bcm2711'))
 
 
 def gpio_claim_input(handle: int, pin: int, flags: int = 0) -> int:

@@ -1,0 +1,3 @@
+# Store text files with LF line endings and use LF in working copies.
+# Git detects binary files and leaves their contents unchanged.
+* text=auto eol=lf

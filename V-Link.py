@@ -21,6 +21,7 @@
 import sys
 import os
 import subprocess
+import shlex
 
 
 def activate_venv():
@@ -63,8 +64,6 @@ from backend.version import VERSION
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from backend.dev.vcan            import VCANThread
-
 from backend.server              import ServerThread
 
 from backend.threads.mst         import MOSTThread
@@ -99,7 +98,6 @@ class VLINK:
             'swc':      SWCThread,
             'cam':      CAMThread,
           
-            'vcan':     VCANThread,
         }
 
         if shared_state.pimost:
@@ -146,6 +144,16 @@ class VLINK:
         settings.load_modules()
 
         if shared_state.vCan:
+            # Simulation tools are available in source checkouts, not release ZIPs.
+            try:
+                from development.vcan import VCANThread
+            except ModuleNotFoundError as error:
+                if error.name not in ('development', 'development.vcan'):
+                    raise
+                raise RuntimeError(
+                    '--vcan requires the development tools from a V-Link source checkout.'
+                ) from error
+            self.threads['vcan'] = VCANThread
             self.start_thread('vcan', logger)
             time.sleep(.05)
 
@@ -179,14 +187,22 @@ class VLINK:
                 return
 
         thread_class = self.threads[thread_name]
-        thread = thread_class(logger=logger) # instantiate thread
-        thread.daemon = True
-        thread.start()
+        try:
+            thread = thread_class(logger=logger) # instantiate thread
+            thread.daemon = True
+            thread.start()
+        except Exception as error:
+            shared_state.THREADS[thread_name] = None
+            logger.exception(
+                f'[V-Link] Could not initialize "{thread_name}" thread; '
+                f'the module will remain disabled: {error}'
+            )
+            return
 
         shared_state.THREADS[thread_name] = thread
-
         time.sleep(.05)
         if not thread.is_alive():
+            shared_state.THREADS[thread_name] = None
             logger.error(f'[V-Link] "{thread_name}" failed to start.')
         else:
             logger.info(f'[V-Link] {thread_name}-thread started.')
@@ -272,13 +288,15 @@ class VLINK:
             logger.info('[V-Link] Restarting App')
             shared_state.restart_event.clear()
 
-            for thread_name, thread in shared_state.THREADS.items():
-                if thread_name != 'server' and isinstance(thread, threading.Thread) and thread.is_alive():
+            # Release Chromium/WebUSB first, then hardware, then the server.
+            # Re-exec the application so no RTI, ignition, event or sensor state
+            # leaks into the next run. Saved settings and launch flags survive.
+            self.stop_thread('app')
+            for thread_name in list(shared_state.THREADS):
+                if thread_name not in ('app', 'server'):
                     self.stop_thread(thread_name)
-            time.sleep(.5)
-            
-            self.start_thread('app', logger)
-            self.start_modules()
+            self.stop_thread('server')
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
 
     def process_hdmi_event(self):
         if shared_state.hdmi_event.is_set():
@@ -289,14 +307,15 @@ class VLINK:
                 else ('vcgencmd display_power 1', 'vcgencmd display_power 0')
             )
 
-            if  not shared_state.hdmiStatus:
-                logger.info('[V-Link] Toggle HDMI Off')
-                os.system(hdmi_off)
-            else:
+            if shared_state.hdmiStatus:
                 logger.info('[V-Link] Toggle HDMI On')
                 os.system(hdmi_on)
+            else:
+                logger.info('[V-Link] Toggle HDMI Off')
+                os.system(hdmi_off)
 
-            shared_state.hdmiStatus = not shared_state.hdmiStatus
+            # do not invert state here, callers set state instead.
+            # shared_state.hdmiStatus = not shared_state.hdmiStatus
 
 
     def process_update_event(self):
@@ -352,6 +371,17 @@ def non_blocking_input(prompt):
         return None
 
 
+def parse_window_size(value):
+    try:
+        width, height = (int(part) for part in value.lower().split('x', 1))
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('window size must use WIDTHxHEIGHT, for example 400x234')
+
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError('window width and height must be greater than zero')
+    return width, height
+
+
 def setup_arguments():
     parser = argparse.ArgumentParser(
         description='Application Manual:\n\n'
@@ -364,6 +394,13 @@ def setup_arguments():
     parser.add_argument('--vlin', action='store_true', help='Simulate LIN-Bus')
     parser.add_argument('--vite', action='store_false', help='Start on Vite-Port 5173')
     parser.add_argument('--nokiosk', action='store_false', help='Start in windowed mode')
+    parser.add_argument(
+        '--window-size',
+        type=parse_window_size,
+        default=(1280, 720),
+        metavar='WIDTHxHEIGHT',
+        help='Window size used with --nokiosk (default: 1280x720)',
+    )
     parser.add_argument('--dev', action='store_true', help='Development mode')
 
     return parser.parse_args()
@@ -457,6 +494,7 @@ if __name__ == '__main__':
     shared_state.vLin = args.vlin
     shared_state.vite = args.vite
     shared_state.isKiosk = args.nokiosk
+    shared_state.browserWindowSize = args.window_size
     shared_state.dev = args.dev
 
     #Set ignition signal HIGH initially
@@ -508,13 +546,19 @@ if __name__ == '__main__':
                 # Launch updater in a new terminal window
                 try:
                     logger.info('Starting update...')
+                    command = shlex.join(['sh', script_path, '--release-id', str(shared_state.update_release_id)])
                     subprocess.Popen([
                         'lxterminal',
                         f'--title=V-Link Updater',
                         '--command',
-                        f"sh -c 'sh \"{script_path}\"; exec bash'"
+                        'sh -c ' + shlex.quote(command + '; exec bash')
                     ])
                 except Exception as e:
-                    logger.error(f'Update failed: {e}')
+                    logger.error(f'Could not open updater terminal: {e}. Starting updater in background.')
+                    log_path = os.path.join(current_dir, 'logs', 'update.log')
+                    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                    with open(log_path, 'a', encoding='utf-8') as update_log:
+                        subprocess.Popen(['sh', script_path, '--release-id', str(shared_state.update_release_id)],
+                                         stdout=update_log, stderr=subprocess.STDOUT, start_new_session=True)
 
             sys.exit(0)

@@ -3,6 +3,7 @@ import {immer} from 'zustand/middleware/immer'
 import type { ReactNode } from 'react'
 import type { ProjectionPhase, ProjectionTransport } from '@/carplay/sessionState'
 import { createEmptyCarplayMedia, type CarplayMediaState, type ProjectionSource } from '@/carplay/mediaState'
+import { APP_VERSION } from '@/version'
 
 interface SizeState {
   width: number;
@@ -107,7 +108,7 @@ const APP = create<AppState>()(
     modules: {},
     settings: {},
     system: {
-      version: 'v3.1.0',
+      version: APP_VERSION,
       view: '',
       switch: 'ArrowUp',
       lastUpdate: 0,

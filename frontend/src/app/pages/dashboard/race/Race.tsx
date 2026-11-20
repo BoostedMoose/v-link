@@ -11,17 +11,33 @@ const Container = styled.div`
   gap: 30px;
   width: 100%;
   height: 100%;
+  @media (max-width: 520px), (max-height: 300px) {
+    gap: 4px;
+    min-height: 0;
+  }
 `;
-
 const Gauge = styled.div`
   height: 60%;
   width: 100%;
   gap: 20px;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    flex: 0 0 54%;
+    height: auto;
+    min-height: 0;
+    gap: 4px;
+  }
 `;
 
 const List = styled.div`
   width: 100%;
   gap: 20px;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
 `;
 
 const Race = () => {

@@ -2,7 +2,6 @@ import threading
 import time
 import json
 import os
-import numpy as np
 import socketio
 from ..shared.shared_state import shared_state
 

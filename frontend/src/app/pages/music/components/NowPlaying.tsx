@@ -1,7 +1,7 @@
 import type { CarplayMediaState, ProjectionSource } from '@/carplay/mediaState';
 import { sendCarplayMediaCommand } from '@/carplay/mediaCommands';
 import { APP, useThemeColor } from '@/store/Store';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useTheme } from 'styled-components';
 
 import {
@@ -14,6 +14,7 @@ import { clampProgress, formatTime, getArtworkSource } from '../utils';
 import UsbMediaBrowser from './UsbMediaBrowser';
 import NativePlayer from './NativePlayer';
 import { useLocalMedia } from '../LocalMediaProvider';
+import { useMediaNavigation } from '../useMediaNavigation';
 
 interface NowPlayingProps {
   media: CarplayMediaState;
@@ -47,30 +48,26 @@ const NowPlaying = ({ media, phoneConnected, source }: NowPlayingProps) => {
   const localMedia = useLocalMedia();
   const localTrack = localMedia.currentTrack == null ? null : localMedia.tracks[localMedia.currentTrack];
   const localAudioActive = APP((state) => state.system.audioSource === 'local');
-  const keyStroke = APP((state) => state.keyStroke);
-  const bindings = APP((state) => state.settings.dongle_bindings as Record<string, { value?: string }> | undefined);
   const [focusedProjectedControl, setFocusedProjectedControl] = useState(1);
-  const handledStrokeRef = useRef(false);
 
-  useEffect(() => {
-    if (!keyStroke) {
-      handledStrokeRef.current = false;
-      return;
-    }
-    if (handledStrokeRef.current || usbBrowserOpen) return;
-    handledStrokeRef.current = true;
-    if (keyStroke === bindings?.down?.value) {
+  useMediaNavigation((action) => {
+    if (usbBrowserOpen) return;
+    if (action === 'browse') {
       setUsbBrowserOpen(true);
     } else if (localAudioActive && localTrack) {
       return;
-    } else if (phoneConnected && keyStroke === bindings?.left?.value) {
+    } else if (action === 'back') {
+      APP.getState().update((state) => { state.system.view = 'Settings'; });
+    } else if (!phoneConnected && action === 'confirm') {
+      setUsbBrowserOpen(true);
+    } else if (phoneConnected && action === 'previous') {
       setFocusedProjectedControl((current) => (current - 1 + PROJECTED_MEDIA_COMMANDS.length) % PROJECTED_MEDIA_COMMANDS.length);
-    } else if (phoneConnected && keyStroke === bindings?.right?.value) {
+    } else if (phoneConnected && action === 'next') {
       setFocusedProjectedControl((current) => (current + 1) % PROJECTED_MEDIA_COMMANDS.length);
-    } else if (phoneConnected && keyStroke === bindings?.selectDown?.value) {
+    } else if (phoneConnected && action === 'confirm') {
       sendCarplayMediaCommand(PROJECTED_MEDIA_COMMANDS[focusedProjectedControl]);
     }
-  }, [bindings, focusedProjectedControl, keyStroke, localAudioActive, localTrack, phoneConnected, usbBrowserOpen]);
+  });
 
   if (usbBrowserOpen) {
     return <UsbMediaBrowser onClose={() => setUsbBrowserOpen(false)} onTrackSelected={() => setUsbBrowserOpen(false)} />;

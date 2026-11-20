@@ -22,6 +22,14 @@ const Container = styled.div`
   background-color: #222222;
   border-radius: 25px;
   filter: drop-shadow(0px 0px 25px #111111);
+
+  @media (max-width: 520px), (max-height: 300px) {
+    width: 96%;
+    height: 84%;
+    gap: 4px;
+    border-radius: 8px;
+    filter: none;
+  }
 `;
 
 const List = styled.div`

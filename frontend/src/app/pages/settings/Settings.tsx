@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useRef, ReactNode } from 'react';
 import CanSettings from './CanSettings';
 import AudioSettings from './AudioSettings';
+import ReleaseChooser from './ReleaseChooser';
 import { getAudioSettingsFromAppSettings, withAudioSettings, type AudioSettingsValues } from './audioSettingsState';
 import RearcamSettings from './RearcamSettings';
 
@@ -413,31 +414,7 @@ const Settings = () => {
     socket.most.emit("force_switch");
   }
 
-  const checkUpdate = async () => {
-    const githubRepo = "BoostedMoose/v-link"; // Replace with your GitHub repository
-
-    try {
-      const response = await fetch(
-        `https://api.github.com/repos/${githubRepo}/releases/latest`
-      );
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch the latest release.");
-      }
-
-      const data = await response.json();
-      const latestVersion = data.tag_name; // This is the version (e.g., "v1.2.0")
-
-
-      if (latestVersion === versionNumber)
-        openModal("No Updates available.", "Check back again later :)", undefined, undefined)
-      else {
-        openModal("New update available!", `Current: ${versionNumber} \n\n Latest: ${latestVersion}`, "UPDATE NOW", () => systemTask('update'))
-      }
-    } catch (error) {
-      openModal("Error checking for updates:", error instanceof Error ? error.message : String(error), undefined, undefined)
-    }
-  }
+  const checkUpdate = () => openModal('V-Link releases', <ReleaseChooser currentVersion={versionNumber} />);
 
 
   // Toggle Threads
@@ -495,20 +472,15 @@ const Settings = () => {
           },
         };
         setCurrentSettings(nextSettings);
-        if (key === 'daylight_backlight') {
-          socket.app.emit('backlight:update', { daylight: newValue });
-        }
-        if (key === 'darkness_backlight') {
-          socket.app.emit('backlight:update', { darkness: newValue });
+        if (key === 'manual_backlight') {
+          socket.app.emit('backlight:update', { manual: newValue });
         }
         scheduleSave(nextSettings);
       };
 
-      const labelStyle = key === 'daylight_backlight' ? { whiteSpace: 'nowrap' as const } : undefined;
-
       return (
         <Element>
-          <Caption2 style={labelStyle}>{label}</Caption2>
+          <Caption2>{label}</Caption2>
           <Divider />
           <Spacer style={{ width: `${rangeWidth}px` }}>
             <CustomSlider
@@ -800,9 +772,8 @@ const Settings = () => {
             <Element>
               <Title>Backlight Settings</Title>
             </Element>
-            {renderSetting("daylight_backlight", currentSettings)}
             {renderSetting("auto_backlight", currentSettings)}
-            {renderSetting("darkness_backlight", currentSettings)}
+            {renderSetting("manual_backlight", currentSettings)}
 
             {settings.constants.modules.rti &&
               <Element>

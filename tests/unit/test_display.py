@@ -6,6 +6,7 @@ block is skipped and only the helper functions / globals are available.
 """
 
 import importlib.util
+import builtins
 import logging
 import re
 import sys
@@ -57,6 +58,61 @@ def _load_vlink():
 
 
 _vmod = _load_vlink()
+
+
+def _simulation_startup(monkeypatch, module, enabled):
+    from backend import settings
+
+    monkeypatch.setattr(module, 'logger', MagicMock())
+    monkeypatch.setattr(settings, 'load_modules', MagicMock())
+    monkeypatch.setattr(module.time, 'sleep', MagicMock())
+    for flag in ('pimost', 'canModule', 'rtiModule', 'adcModule', 'swcModule'):
+        monkeypatch.setattr(module.shared_state, flag, False)
+    monkeypatch.setattr(module.shared_state, 'vCan', enabled)
+    instance = module.VLINK()
+    monkeypatch.setattr(instance, 'start_thread', MagicMock())
+    monkeypatch.setattr(module, 'vlink', instance, raising=False)
+    return instance
+
+
+def test_normal_startup_works_without_development_tools(monkeypatch):
+    original_import = builtins.__import__
+
+    def without_development(name, *args, **kwargs):
+        if name == 'development' or name.startswith('development.'):
+            raise ModuleNotFoundError(name=name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', without_development)
+    module = _load_vlink()
+    instance = _simulation_startup(monkeypatch, module, False)
+    instance.start_modules()
+    assert 'vcan' not in instance.threads
+    instance.start_thread.assert_any_call('cam', module.logger)
+
+
+def test_vcan_registers_simulator_from_development_folder(monkeypatch):
+    from development.vcan import VCANThread
+
+    instance = _simulation_startup(monkeypatch, _vmod, True)
+    instance.start_modules()
+    assert instance.threads['vcan'] is VCANThread
+    instance.start_thread.assert_any_call('vcan', _vmod.logger)
+
+
+def test_vcan_explains_missing_development_tools(monkeypatch):
+    original_import = builtins.__import__
+
+    def without_development(name, *args, **kwargs):
+        if name == 'development.vcan':
+            raise ModuleNotFoundError(name='development')
+        return original_import(name, *args, **kwargs)
+
+    instance = _simulation_startup(monkeypatch, _vmod, True)
+    monkeypatch.setattr(builtins, '__import__', without_development)
+    with pytest.raises(RuntimeError, match='--vcan requires the development tools'):
+        instance.start_modules()
+    instance.start_thread.assert_not_called()
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -113,6 +169,46 @@ def _plain(capsys) -> str:
     return strip_ansi(_render(capsys))
 
 
+def test_full_restart_reexecutes_after_browser_hardware_and_server_shutdown(monkeypatch):
+    events = []
+    monkeypatch.setattr(_vmod, 'logger', MagicMock())
+    instance = _vmod.VLINK()
+    instance.stop_thread = lambda name: events.append(('stop', name))
+    monkeypatch.setattr(_vmod.shared_state, 'THREADS', {
+        'server': _alive(), 'app': _alive(), 'rti': _alive(), 'ign': _alive(),
+    })
+    restart_event = threading.Event()
+    restart_event.set()
+    monkeypatch.setattr(_vmod.shared_state, 'restart_event', restart_event)
+    monkeypatch.setattr(_vmod.sys, 'argv', [str(_VLINK_PATH), '--dev', '--nokiosk'])
+    monkeypatch.setattr(_vmod.os, 'execv', lambda exe, args: events.append(('exec', exe, args)))
+
+    instance.process_restart_event()
+
+    assert events == [
+        ('stop', 'app'), ('stop', 'rti'), ('stop', 'ign'), ('stop', 'server'),
+        ('exec', sys.executable, [sys.executable, str(_VLINK_PATH), '--dev', '--nokiosk']),
+    ]
+    assert not restart_event.is_set()
+
+
+def test_thread_constructor_failure_does_not_crash_application(monkeypatch):
+    class BrokenThread:
+        def __init__(self, logger):
+            del logger
+            raise RuntimeError('hardware unavailable')
+
+    logger = MagicMock()
+    monkeypatch.setattr(_vmod, 'logger', logger)
+    instance = _vmod.VLINK()
+    instance.threads['cam'] = BrokenThread
+
+    instance.start_thread('cam', logger)
+
+    assert _vmod.shared_state.THREADS['cam'] is None
+    logger.exception.assert_called_once()
+
+
 class TestBacklightCanData:
     def test_reads_nested_sensor_data(self):
         from backend.shared.backlight_helper import BacklightController
@@ -120,12 +216,12 @@ class TestBacklightCanData:
         original_car_data = _vmod.shared_state.car_data
         try:
             _vmod.shared_state.car_data = {
-                'data': {'light': '0.80'},
+                'data': {'dashboard_brightness': '1.00'},
                 'pollingrate': {},
                 'timestamp': None,
             }
 
-            assert BacklightController()._mode_from_can() == 'night'
+            assert BacklightController()._dashboard_level_from_can() == 1
         finally:
             _vmod.shared_state.car_data = original_car_data
 
@@ -134,9 +230,9 @@ class TestBacklightCanData:
 
         original_car_data = _vmod.shared_state.car_data
         try:
-            _vmod.shared_state.car_data = {'light': 3.0}
+            _vmod.shared_state.car_data = {'dashboard_brightness': 16.0}
 
-            assert BacklightController()._mode_from_can() == 'day'
+            assert BacklightController()._dashboard_level_from_can() == 16
         finally:
             _vmod.shared_state.car_data = original_car_data
 

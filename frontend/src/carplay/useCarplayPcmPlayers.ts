@@ -35,7 +35,12 @@ export const useCarplayPcmPlayers = (worker: CarPlayWorker) => {
       requestedVolumesRef.current.set(audioKey, DEFAULT_CARPLAY_AUDIO_VOLUME)
       appliedVolumesRef.current.set(audioKey, DEFAULT_CARPLAY_AUDIO_VOLUME)
       player.volume(DEFAULT_CARPLAY_AUDIO_VOLUME)
-      void player.start()
+      void player.start().catch(error => {
+        // A restart can close the AudioContext while its worklet is loading.
+        if (playersRef.current.get(audioKey) === player) {
+          socket.log.emit('error', `(CarPlay) Audio player startup failed: ${error}`)
+        }
+      })
     }
 
     // The projection worker drops its buffer references when a session restarts,
@@ -104,7 +109,9 @@ export const useCarplayPcmPlayers = (worker: CarPlayWorker) => {
   useEffect(() => () => {
     volumeAnimationsRef.current.forEach((animation) => cancelAnimationFrame(animation))
     volumeAnimationsRef.current.clear()
-    playersRef.current.forEach((player) => void player.stop())
+    playersRef.current.forEach((player) => void player.stop().catch(error => {
+      console.warn('(CarPlay) Audio player cleanup failed', error)
+    }))
     playersRef.current.clear()
     requestedVolumesRef.current.clear()
     appliedVolumesRef.current.clear()

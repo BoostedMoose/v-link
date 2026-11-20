@@ -26,7 +26,7 @@ What it does not provide:
     * Real hardware integration.
 
 Usage from the project root:
-    python3 vlink-preview.py
+    python3 development/vlink-preview.py
 
 Press Ctrl+C in the terminal to stop the Vite server.
 """
@@ -40,7 +40,7 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 PREVIEW_URL = "http://localhost:5173/vlink-preview.html"
 

@@ -3,6 +3,7 @@ import styled, { useTheme } from 'styled-components';
 
 import { DATA, APP, ModuleState, useThemeColor, ThemeColorKey } from '@/store/Store';
 import { CustomIcon } from '@/theme/styles/Icons';
+import { isCompactViewport } from '@/app/helper/Layout';
 
 type SettingValue<T> = { value: T };
 type SensorSetting = { value: string; type: string };
@@ -31,6 +32,10 @@ const Container = styled.div`
   background-size: contain;
   background-repeat: no-repeat;
   background-position: center;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    padding-top: 2px;
+  }
 `;
 
 const Databox = styled.div`
@@ -52,6 +57,13 @@ const Icons = styled.div`
   padding-left: 20px;
   padding-right: 20px;
   box-sizing: border-box;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    gap: clamp(24px, 18vw, 72px);
+    height: 14px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
 `;
 
 const Svg = styled.svg`
@@ -78,7 +90,8 @@ const DataBox = () => {
     const centerName = dash_classic?.message_data.value ?? '';
     const centerType = dash_classic?.message_data.type;
 
-    const padding = 20;
+    const compact = isCompactViewport(APP((state) => state.system.windowSize));
+    const padding = compact ? 8 : 20;
     const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const { width, height } = dimensions;
@@ -201,7 +214,7 @@ const DataBox = () => {
             <Icons>
                 <CustomIcon
                     stroke={2}
-                    size={25}
+                    size={compact ? 16 : 25}
                     isActive={(dashData.left.data as number) > dashData.left.limit}
                     activeColor={themeColors.activeColor}
                     defaultColor={themeColors.defaultColor}
@@ -218,14 +231,14 @@ const DataBox = () => {
                 <CustomIcon
                     color={toggle ? themeColors.blueHighlight : themeColors.inactiveColor}
                     stroke={2}
-                    size={40}
+                    size={compact ? 22 : 40}
                 >
                     <use xlinkHref={`/assets/svg/icons/data/${'err'}.svg#${'err'}`} />
                 </CustomIcon>
 
                 <CustomIcon
                     stroke={2}
-                    size={25}
+                    size={compact ? 16 : 25}
                     isActive={(dashData.right.data as number) > dashData.right.limit}
                     activeColor={themeColors.activeColor}
                     defaultColor={themeColors.defaultColor}
