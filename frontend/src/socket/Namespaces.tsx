@@ -18,7 +18,7 @@ export function useNamespaces() {
       rti: io("ws://localhost:4001/rti", socketOptions),
       sys: io("ws://localhost:4001/sys", socketOptions),
       log: io("ws://localhost:4001/log", socketOptions),
-      cam: io("ws://localhost:4001/cam", socketOptions),
+      cam: io("ws://localhost:4001/rearcam", socketOptions),
 
       data: io("ws://localhost:4001/data", socketOptions),
     };

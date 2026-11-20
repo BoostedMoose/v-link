@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, ReactNode } from 'react';
+import { Fragment, useState, useEffect, useRef, ReactNode } from 'react';
 import CanSettings from './CanSettings';
 import AudioSettings from './AudioSettings';
 import ReleaseChooser from './ReleaseChooser';
 import { getAudioSettingsFromAppSettings, withAudioSettings, type AudioSettingsValues } from './audioSettingsState';
+import RearcamSettings from './RearcamSettings';
 
 import styled, { useTheme } from 'styled-components';
 import ScrollContainer from 'react-indiana-drag-scroll'
@@ -47,7 +48,6 @@ type AppSettings = {
 
 type DataStoreMap = Record<string, Record<string, { label: string }>>;
 type ModuleSelectorFn = (select: (s: ModuleState) => ModuleState) => ModuleState;
-type DropdownOption = string | { value: string; label: string };
 
 const Container = styled.div`
     flex: 1;
@@ -102,11 +102,9 @@ const Element = styled.div`
     margin-bottom: 12px;
 `
 
-
 const Settings = () => {
 
   /* Load Types */
-  const Body1 = Typography.Body1
   const Title = Typography.Title
   const Caption2 = Typography.Caption2
 
@@ -133,13 +131,14 @@ const Settings = () => {
   const [save, setSave] = useState(true)
   const [reset, setReset] = useState(false)
   const [currentSettings, setCurrentSettings] = useState<AppSettings>(structuredClone(settings) as AppSettings);
-  const [cameraDevices, setCameraDevices] = useState<{ deviceId: string; label: string }[]>([]);
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const appSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<AppSettings>(currentSettings);
+  const pendingCanSettingsRef = useRef(canSettings);
+  const pendingAppSaveRef = useRef(false);
+  const pendingCanSaveRef = useRef(false);
   const SAVE_DEBOUNCE_MS = 500;
 
-  const setKeyStroke = APP((state) => state.setKeyStroke);
-  const setSwitchPage = APP((state) => state.setSwitchPage);
   const setPauseKeyBinds = APP((state) => state.setPauseKeyBinds);
 
 
@@ -154,36 +153,26 @@ const Settings = () => {
   }, [modules]);
 
   useEffect(() => {
-    if (!navigator?.mediaDevices?.enumerateDevices) return;
-
-    const updateDevices = async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices
-          .filter((device) => device.kind === 'videoinput')
-          .map((device, index) => ({
-            deviceId: device.deviceId,
-            label: device.label || `Camera ${index + 1}`,
-          }));
-        setCameraDevices(videoInputs);
-      } catch {
-        setCameraDevices([]);
-      }
-    };
-
-    updateDevices();
-    navigator.mediaDevices.addEventListener('devicechange', updateDevices);
-    return () => navigator.mediaDevices.removeEventListener('devicechange', updateDevices);
-  }, []);
-
-  useEffect(() => {
     pendingSettingsRef.current = currentSettings;
   }, [currentSettings]);
 
   useEffect(() => {
+    pendingCanSettingsRef.current = canSettings;
+  }, [canSettings]);
+
+  useEffect(() => {
     return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current);
+      if (appSaveTimeoutRef.current) clearTimeout(appSaveTimeoutRef.current);
+      if (canSaveTimeoutRef.current) clearTimeout(canSaveTimeoutRef.current);
+
+      // Do not lose a debounced save when the user leaves Settings quickly.
+      if (pendingAppSaveRef.current) {
+        const pending = pendingSettingsRef.current;
+        appUpdate((state) => { state.settings = pending; });
+        socket.app.emit('save', pending);
+      }
+      if (pendingCanSaveRef.current) {
+        socket.can.emit('save', pendingCanSettingsRef.current);
       }
     };
   }, []);
@@ -206,9 +195,11 @@ const Settings = () => {
     prevCanSettingsRef.current = canSettings;
     setSave(false);
     if (autoSave) {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = setTimeout(() => {
-        socket.can.emit('save', canSettings);
+      if (canSaveTimeoutRef.current) clearTimeout(canSaveTimeoutRef.current);
+      pendingCanSaveRef.current = true;
+      canSaveTimeoutRef.current = setTimeout(() => {
+        pendingCanSaveRef.current = false;
+        socket.can.emit('save', pendingCanSettingsRef.current);
       }, SAVE_DEBOUNCE_MS);
     }
   }, [canSettings]);
@@ -235,7 +226,13 @@ const Settings = () => {
   const autoSave = (currentSettings?.general as Record<string, SettingContent>)?.autoSave?.value as boolean ?? false;
 
   const scheduleSave = (nextSettings: AppSettings) => {
-    if (!autoSave) {
+    const nextAutoSave = Boolean(
+      (nextSettings?.general as Record<string, SettingContent>)?.autoSave?.value
+    );
+
+    // Save both transitions: off -> on and on -> off. For ordinary changes,
+    // either the current or next value will be the same.
+    if (!autoSave && !nextAutoSave) {
       setSave(false);
       return;
     }
@@ -243,11 +240,13 @@ const Settings = () => {
     setSave(false);
     pendingSettingsRef.current = nextSettings;
 
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
+    if (appSaveTimeoutRef.current) {
+      clearTimeout(appSaveTimeoutRef.current);
     }
 
-    saveTimeoutRef.current = setTimeout(() => {
+    pendingAppSaveRef.current = true;
+    appSaveTimeoutRef.current = setTimeout(() => {
+      pendingAppSaveRef.current = false;
       saveSettings(pendingSettingsRef.current);
     }, SAVE_DEBOUNCE_MS);
   };
@@ -333,6 +332,15 @@ const Settings = () => {
     scheduleSave(newSettings);
   };
 
+  const handleRearcamChange = (reverseCam: SettingsGroup) => {
+    const nextSettings: AppSettings = {
+      ...currentSettings,
+      reverseCam,
+    };
+    setCurrentSettings(nextSettings);
+    scheduleSave(nextSettings);
+  };
+
   // Clean Dashboard Entries when sensors are removed to prevent ghost entries and crashes
   function cleanDashboardEntries(settingsToClean: AppSettings, activeSensorKeys: Set<string>): { cleaned: AppSettings; didClean: boolean } {
     const cleaned = structuredClone(settingsToClean) as AppSettings;
@@ -363,7 +371,10 @@ const Settings = () => {
 
   // Save Settings
   function saveSettings(settingsToSave: AppSettings = currentSettings) {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    if (appSaveTimeoutRef.current) clearTimeout(appSaveTimeoutRef.current);
+    if (canSaveTimeoutRef.current) clearTimeout(canSaveTimeoutRef.current);
+    pendingAppSaveRef.current = false;
+    pendingCanSaveRef.current = false;
     setSave(true);
 
     const activeSensorKeys = new Set(
@@ -522,22 +533,9 @@ const Settings = () => {
       //Check if value is a number or boolean
       const isText = (content.type === 'text')
 
-      const isRearcamDeviceId = key === 'reverseCam' && setting === 'deviceId';
-      const rearcamDeviceOptions: DropdownOption[] | null = isRearcamDeviceId
-        ? [
-          { value: 'default', label: 'Default' },
-          ...cameraDevices.map((device) => ({
-            value: device.deviceId,
-            label: device.label,
-          })),
-        ]
-        : null;
-
-      const dropdown: DropdownOption[] | null = (isText || typeof value === 'number' || typeof value === 'boolean' || key.includes('bindings'))
+      const dropdown: string[] | null = (isText || typeof value === 'number' || typeof value === 'boolean' || key.includes('bindings'))
         ? null                                                                    //Yes? Return null
-        : ((rearcamDeviceOptions && rearcamDeviceOptions.length > 0)
-          ? rearcamDeviceOptions
-          : (content.options || Object.keys(dataOptions).map((k) => k)))
+        : (content.options || Object.keys(dataOptions).map((k) => k))
 
       // Check for boolean setting
       const isBoolean = typeof value === 'boolean';                               // Checks if the setting is a boolean.
@@ -611,7 +609,8 @@ const Settings = () => {
 
 
       return (
-        <Element key={setting}>
+        <Fragment key={setting}>
+        <Element>
           <Caption2>{label}</Caption2>
           <Divider />
           <Spacer>
@@ -625,13 +624,9 @@ const Settings = () => {
                 <option value="">
                   N/A
                 </option>
-                {dropdown.map((option) => {
-                  const optVal = typeof option === 'string' ? option : option.value;
-                  const optLabel = typeof option === 'string' ? option : option.label;
-                  return (
-                    <option key={optVal} value={optVal}>{optLabel}</option>
-                  );
-                })}
+                {dropdown.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
               </Select>)
               : (isBoolean
                 ? (<ToggleSwitch
@@ -645,10 +640,19 @@ const Settings = () => {
                   ? (<Button name={setting} onClick={() => { handleBinding(key, setting) }}>
                     {value as string}
                   </Button>)
-                  : <Input name={setting} type={isText ? 'text' : 'number'} value={value as string | number} onChange={handleChange} />
+                  : <Input
+                    name={setting}
+                    type={isText ? 'text' : 'number'}
+                    value={value as string | number}
+                    min={content.min}
+                    max={content.max}
+                    step={content.step}
+                    onChange={handleChange}
+                  />
               )}
           </Spacer>
         </Element>
+        </Fragment>
       );
     });
 
@@ -797,7 +801,10 @@ const Settings = () => {
 
         {settingPage === 'rearcam' &&
           <>
-            {renderSetting("reverseCam", currentSettings)}
+            <RearcamSettings
+              settings={currentSettings.reverseCam as SettingsGroup | undefined}
+              onChange={handleRearcamChange}
+            />
             <p />
           </>
         }

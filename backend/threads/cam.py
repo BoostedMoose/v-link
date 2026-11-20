@@ -151,15 +151,6 @@ class CAMThread(threading.Thread):
 
 
 
-try:
-    import lgpio  # type: ignore
-    LGPIO_AVAILABLE = True
-    _LGPIO_IMPORT_ERROR: Optional[BaseException] = None
-except Exception as e:  # ImportError or similar
-    LGPIO_AVAILABLE = False
-    _LGPIO_IMPORT_ERROR = e
-
-
 class CameraGPIO:
     # GPIO driver to power camera on/off.
     # - line: BCM line number (e.g. 18)
@@ -193,16 +184,8 @@ class CameraGPIO:
         requested_chip = chip if chip is not None else "auto"
         self.logger.debug(f"CameraGPIO init: line={self.line}, chip={requested_chip}, active_high={self.active_high}")
 
-    def _require_lgpio(self) -> None:
-        if not LGPIO_AVAILABLE:
-            raise RuntimeError(
-                f"lgpio not available: {_LGPIO_IMPORT_ERROR!r}. "
-                "Install 'lgpio' or run on compatible hardware."
-            )
-
     def _open_chip(self) -> None:
         if self._chip is None:
-            self._require_lgpio()
             try:
                 self._chip, self._chip_num = open_gpiochip(self._requested_chip)
                 self.logger.debug(f"CameraGPIO: opened gpiochip{self._chip_num}")
@@ -212,7 +195,6 @@ class CameraGPIO:
 
     def _ensure_claimed(self) -> None:
         if not self._claimed:
-            self._require_lgpio()
             try:
                 # claim as output, initial LOW
                 lgpio.gpio_claim_output(self._chip, self.line, 0)  # type: ignore[arg-type]
@@ -222,7 +204,6 @@ class CameraGPIO:
                 raise RuntimeError(f"not able to claim GPIO{self.line} as output: {e}") from e
 
     def _write_level(self, level: int) -> None:
-        self._require_lgpio()
         try:
             lgpio.gpio_write(self._chip, self.line, int(level))  # type: ignore[arg-type]
         except Exception as e:
@@ -251,9 +232,8 @@ class CameraGPIO:
             return self._on
 
     def level(self) -> int:
-        
+
         self._open_chip()
-        self._require_lgpio()
         try:
             if not self._claimed:
                 return 1 if (self._on == self.active_high) else 0
@@ -267,14 +247,14 @@ class CameraGPIO:
         
         with self._lock:
             try:
-                if self._claimed and LGPIO_AVAILABLE:
+                if self._claimed:
                     off_level = 1 if (False == self.active_high) else 0
                     try:
                         self._write_level(off_level)
                     finally:
                         self._on = False
                         self._claimed = False
-                if self._chip is not None and LGPIO_AVAILABLE:
+                if self._chip is not None:
                     try:
                         lgpio.gpiochip_close(self._chip)  # type: ignore[arg-type]
                     finally:
