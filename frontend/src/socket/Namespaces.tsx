@@ -19,6 +19,7 @@ export function useNamespaces() {
       sys: io("ws://localhost:4001/sys", socketOptions),
       log: io("ws://localhost:4001/log", socketOptions),
       cam: io("ws://localhost:4001/rearcam", socketOptions),
+      most: io("ws://localhost:4001/most", socketOptions),
 
       data: io("ws://localhost:4001/data", socketOptions),
     };

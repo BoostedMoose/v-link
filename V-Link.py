@@ -97,11 +97,8 @@ class VLINK:
             'ign':      IGNThread,
             'swc':      SWCThread,
             'cam':      CAMThread,
-          
+            'mst':      MOSTThread,
         }
-
-        if shared_state.pimost:
-            self.threads['mst'] = MOSTThread
 
         logger.info(f'Starting V-Link {VERSION}')
 

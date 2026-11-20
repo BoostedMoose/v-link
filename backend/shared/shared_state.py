@@ -80,7 +80,7 @@ class SharedState:
             "ign":      None,
             "cam":      None,
             "vcan":     None,
-            "pimost":   None,
+            "mst":      None,
         }
 
     def update_car_data(self, key, value):

@@ -45,7 +45,8 @@ class ServerThread(threading.Thread):
         self.daemon = True  # Ensure thread stops when main program exits
         self.app = server
         self.stop_event = threading.Event()
-        self.server_socket = eventlet.listen(('0.0.0.0', 4001))        
+        # Local clients only: the Socket.IO and HTTP API has no authentication.
+        self.server_socket = eventlet.listen(('127.0.0.1', 4001))
 
     def run(self):
         try:
@@ -441,7 +442,7 @@ class ServerThread(threading.Thread):
     @socketio.on('force_switch', namespace='/most')
     def handle_force_switch():
         logger.info(f'[Server] Force MOST switch')
-        most_thread = shared_state.THREADS.get('pimost', None)
+        most_thread = shared_state.THREADS.get('mst', None)
 
         if most_thread and most_thread.is_alive():
             most_thread.force_switch()

@@ -16,7 +16,7 @@ def test_initial_module_flags_are_false():
 
 def test_initial_thread_dict_has_all_keys():
     s = SharedState()
-    expected = {'server', 'app', 'can', 'swc', 'adc', 'rti', 'ign', 'cam', 'vcan', 'pimost'}
+    expected = {'server', 'app', 'can', 'swc', 'adc', 'rti', 'ign', 'cam', 'vcan', 'mst'}
     assert set(s.THREADS.keys()) == expected
     assert all(v is None for v in s.THREADS.values())
 

@@ -267,3 +267,7 @@ def load_modules():
     shared_state.swcModule = constants['modules']['swc']
     shared_state.rtiModule = constants['modules']['rti']
     shared_state.adcModule = constants['modules']['adc']
+
+    # PiMOST is switched on in the dongle settings, not in constants.modules.
+    pimost = settings.get('dongle_config', {}).get('piMost', {})
+    shared_state.pimost = isinstance(pimost, dict) and pimost.get('value') is True

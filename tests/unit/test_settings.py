@@ -340,3 +340,25 @@ def test_load_modules_sets_shared_state_flags(temp_config_dir, monkeypatch):
     assert fresh_state.rtiModule is False
     assert fresh_state.swcModule is True
     assert fresh_state.adcModule is False
+    assert fresh_state.pimost is False
+
+
+def test_load_modules_enables_pimost_from_dongle_config(temp_config_dir, monkeypatch):
+    """The PiMOST toggle in dongle_config enables the MOST thread."""
+    from backend import settings
+    from backend.shared.shared_state import SharedState
+
+    fresh_state = SharedState()
+    monkeypatch.setattr(settings, 'shared_state', fresh_state)
+
+    app_data = {
+        'constants': {
+            'modules': {'can': False, 'rti': False, 'swc': False, 'adc': False}
+        },
+        'dongle_config': {'piMost': {'value': True, 'label': 'Enable PiMOST'}},
+    }
+    (temp_config_dir / 'app.json').write_text(json.dumps(app_data))
+
+    settings.load_modules()
+
+    assert fresh_state.pimost is True
