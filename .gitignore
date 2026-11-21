@@ -5,7 +5,10 @@ node_modules/
 venv/
 dist/
 frontend/dist/
+frontend/node_modules/
 __pycache__/
+.pytest_cache/
+coverage/
 
 
 
@@ -19,3 +22,9 @@ __pycache__/
 create-package.sh
 v-link.code-workspace
 logs/
+.lgd-nfy*
+
+#tooling
+.vscode/
+.claude/
+CLAUDE.md

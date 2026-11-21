@@ -1,8 +1,25 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styled, { useTheme } from 'styled-components';
 
-import { DATA, APP } from '../../store/Store';
+import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
 import convert from 'color-convert';
+
+// ── local setting-shape types ─────────────────────────────────────────────────
+type SensorSetting = { value: string; type: string };
+type DashChartsSettings = Record<string, SensorSetting>;
+type SensorConfig = { label?: string; min_value?: number; max_value?: number };
+
+interface Point { x: number; y: number }
+
+interface DataChartProps {
+    length?: number;
+    resolution?: number;
+    setCount: number;
+    tickCountX: number;
+    tickCountY: number;
+    color_xGrid: string;
+    color_yGrid: string;
+}
 
 const Container = styled.div`
     position: relative;
@@ -50,24 +67,23 @@ const DataChart = ({
     tickCountY,
     color_xGrid,
     color_yGrid,
-}) => {
+}: DataChartProps) => {
     const theme = useTheme();
-    const steps = parseInt(length / resolution);
+    const steps = Math.trunc(length / resolution);
 
     const appUpdate = APP((state) => state.update);
     const modules = APP((state) => state.modules);
     const isRecording = APP((state) => state.system.isRecording);
-    const dashChartsSettings = APP((state) => state.settings.dash_charts);
-    const themeColor = APP((state) => state.settings.general.colorTheme.value).toLowerCase();
+    const dashChartsSettings = APP((state) => state.settings.dash_charts as DashChartsSettings | undefined);
+    const themeColor = useThemeColor();
 
     const data = DATA((state) => state.data);
 
-    const containerRef = useRef(null);  // Create a reference for the container
+    const containerRef = useRef<HTMLDivElement>(null);
     const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
     const { width, height } = dimensions;
 
     useEffect(() => {
-        // Function to handle size changes
         const handleResize = () => {
             if (containerRef.current) {
                 setDimensions({
@@ -77,32 +93,36 @@ const DataChart = ({
             }
         };
 
-        // Use ResizeObserver to listen for size changes (including animations)
         const resizeObserver = new ResizeObserver(handleResize);
         if (containerRef.current) {
             resizeObserver.observe(containerRef.current);
         }
 
         return () => {
-            resizeObserver.disconnect(); // Fixed: use disconnect instead of unobserve
+            resizeObserver.disconnect();
         };
-    }, []);  // Empty dependency array ensures this runs once on mount
-
+    }, []);
 
     const datasets = Array.from({ length: setCount }, (_, i) => {
         const key = `value_${i + 1}`;
-        const sensor = dashChartsSettings[key].value;
-        const type = dashChartsSettings[key].type;
+        const setting = dashChartsSettings?.[key];
+        const sensor = setting?.value ?? '';
+        const type = setting?.type;
 
-        const config =
-            type && sensor
-                ? modules[type]((state) => state.settings.sensors[sensor]) || {}
-                : {};
+        const moduleSelector = type && sensor
+            ? (modules[type] as ((select: (s: ModuleState) => unknown) => unknown) | undefined)
+            : undefined;
+
+        const config: SensorConfig = moduleSelector
+            ? (moduleSelector((state: ModuleState) =>
+                (state.settings.sensors as Record<string, unknown> | undefined)?.[sensor]
+              ) as SensorConfig | undefined) ?? {}
+            : {};
 
         const value = data[sensor];
 
         return {
-            label: config.label ?? "N/A",
+            label: config.label ?? 'N/A',
             color: 'var(--themeDefault)',
             yMin: config.min_value ?? 0,
             yMax: config.max_value ?? 100,
@@ -111,7 +131,7 @@ const DataChart = ({
     });
 
 
-    // Initialize dataStreams and recordedData with empty arrays for each dataset
+    // Initialize dataStreams with empty arrays for each dataset
     const [dataStreams, setDataStreams] = useState(datasets.map(() => Array(steps).fill(0)));
 
     const generateColors = () => {
@@ -162,7 +182,7 @@ const DataChart = ({
         return gridLines;
     };
 
-    const catmullRomSpline = (p0, p1, p2, p3, t) => {
+    const catmullRomSpline = (p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point => {
         const t2 = t * t;
         const t3 = t2 * t;
 
@@ -182,10 +202,9 @@ const DataChart = ({
         const rightOffset = -5;
 
         const paths = datasets.map((dataset, i) => {
-            const points = [];
-            const yScale = height / (dataset.yMax - dataset.yMin); // Shared y scale
+            const points: Point[] = [];
+            const yScale = height / (dataset.yMax - dataset.yMin);
 
-            // Generate points based on the dataset values
             dataStreams[i].forEach((value, j) => {
                 if (value !== null) {
                     const x = ((j / (steps - 2)) * width) + leftOffset;
@@ -194,7 +213,7 @@ const DataChart = ({
                 }
             });
 
-            let pathData = "";
+            let pathData = '';
             for (let j = 1; j < points.length - 2; j++) {
                 const p0 = points[j - 1];
                 const p1 = points[j];
@@ -261,18 +280,16 @@ const DataChart = ({
         return <>{paths}</>;
     };
 
-    // Keep your original approach but use useRef to prevent timer accumulation
-    const timerRef = useRef(null);
-    
+    const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
     useEffect(() => {
-        // Clear any existing timer first
         if (timerRef.current) {
             clearInterval(timerRef.current);
         }
-        
+
         timerRef.current = setInterval(() => {
             const newDataStreams = datasets.map((dataset, index) => {
-                let value = Math.abs(dataset.data);
+                let value = Math.abs(dataset.data as number);
                 if (isNaN(value)) value = 0;
                 value = Math.max(dataset.yMin, Math.min(dataset.yMax, value));
 
@@ -287,7 +304,7 @@ const DataChart = ({
                 clearInterval(timerRef.current);
             }
         };
-    }, [dataStreams]); // Keep your original dependency
+    }, [dataStreams]);
 
     const handleToggleRecording = () => {
         appUpdate((state) => {
@@ -296,7 +313,7 @@ const DataChart = ({
     };
 
     return (
-        <Container ref={containerRef} theme={theme}>
+        <Container ref={containerRef}>
             <svg width={width} height={height}>
                 {renderGrid()}
                 {renderCurve()}
@@ -325,15 +342,13 @@ const DataChart = ({
                     viewBox="0 0 50 50"
                     xmlns="http://www.w3.org/2000/svg"
                     style={{
-                        fill: isRecording ? 'red' : color_xGrid, // Change color based on recording state
+                        fill: isRecording ? 'red' : color_xGrid,
                         borderRadius: '50%',
-                        stroke: "#141414",  // Black outline for the button
-                        strokeWidth: 4,   // Set outline thickness
+                        stroke: '#141414',
+                        strokeWidth: 4,
                     }}
                 >
-                    {/* Outer circle (the button's background) */}
                     <circle cx="25" cy="25" r="16" />
-                    {/* Inner circle (the gap in the middle) */}
                     <circle cx="25" cy="25" r="8" fill={isRecording ? 'red' : color_xGrid} />
                 </svg>
             </RecordButton>

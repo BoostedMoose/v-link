@@ -5,6 +5,8 @@
     "padding": 30,
     "chart_input_max": 6,
     "chart_input_current": 4,
+    "rearcam_settings_version": 1,
+    "rearcam_settings_reset_notice": false,
     "profile": null,
     "keymap": {
       "options": [
@@ -67,6 +69,34 @@
     "exitToDash": {
       "value": false,
       "label": "Exit CarPlay to Dashboard"
+    },
+    "autoSave": {
+      "label": "Auto Save",
+      "value": false
+    }
+  },
+  "audio": {
+    "title": "Audio Settings",
+    "type": "system",
+    "autoplayLocalMedia": {
+      "value": false,
+      "label": "Play Local Media on Startup"
+    },
+    "navigationVolume": {
+      "value": 80,
+      "label": "Navigation Volume"
+    },
+    "callVolume": {
+      "value": 85,
+      "label": "Call Volume"
+    },
+    "navigationDuckingAmount": {
+      "value": 25,
+      "label": "Navigation Ducking Intensity"
+    },
+    "microphoneGainDb": {
+      "value": 0,
+      "label": "Microphone Input Gain"
     }
   },
   "shutdown": {
@@ -93,16 +123,125 @@
       "label": "Open Screen on Start"
     }
   },
+  "auto_backlight": {
+    "title": "Brightness Mode",
+    "type": "system",
+    "autoOpen": {
+      "value": true,
+      "label": "Follow Dashboard (requires HS CAN)"
+    }
+  },
+  "manual_backlight": {
+    "ui": "range",
+    "label": "Manual / Fallback Brightness Level",
+    "value": 15,
+    "min": 1,
+    "max": 16,
+    "step": 1
+  },
+  "dashboard": {
+    "title": "Dashboard Settings",
+    "type": "system",
+    "enabled": {
+      "value": true,
+      "label": "Show in Navbar"
+    }
+  },
   "reverseCam": {
     "title": "Reverse Camera Settings",
     "type": "system",
     "enabled": {
       "value": true,
-      "label": "Enabled"
+      "label": "Show in Navigation"
     },
     "delay": {
       "value": 7,
       "label": "Off Delay (sec)"
+    },
+    "deviceSelectionMode": {
+      "value": "auto",
+      "label": "Device Selection",
+      "options": [
+        "auto",
+        "deviceId"
+      ]
+    },
+    "deviceId": {
+      "value": "default",
+      "label": "Camera Device",
+      "options": [
+        "default"
+      ]
+    },
+    "videoResolution": {
+      "value": "Auto",
+      "label": "Resolution",
+      "options": [
+        "Auto",
+        "640 × 360",
+        "854 × 480",
+        "1280 × 720"
+      ]
+    },
+    "videoFps": {
+      "value": "Auto",
+      "label": "Video FPS",
+      "options": [
+        "Auto",
+        "PAL",
+        "NTSC"
+      ]
+    },
+    "guidelineMode": {
+      "value": "Standard",
+      "label": "Guidelines",
+      "options": [
+        "Off",
+        "Standard",
+        "Custom"
+      ]
+    },
+    "guidelineNearWidth": {
+      "value": 80,
+      "label": "Near Width (%)",
+      "min": 20,
+      "max": 100,
+      "step": 1
+    },
+    "guidelineFarWidth": {
+      "value": 35,
+      "label": "Far Width (%)",
+      "min": 5,
+      "max": 90,
+      "step": 1
+    },
+    "guidelineLength": {
+      "value": 55,
+      "label": "Guide Length (%)",
+      "min": 20,
+      "max": 100,
+      "step": 1
+    },
+    "guidelineVerticalPosition": {
+      "value": 45,
+      "label": "Vertical Position (%)",
+      "min": 0,
+      "max": 100,
+      "step": 1
+    },
+    "guidelineOpacity": {
+      "value": 100,
+      "label": "Guide Opacity (%)",
+      "min": 10,
+      "max": 100,
+      "step": 1
+    },
+    "guidelineLineThickness": {
+      "value": 65,
+      "label": "Line Thickness (%)",
+      "min": 50,
+      "max": 200,
+      "step": 5
     }
   },
   "side_bars": {
@@ -121,7 +260,7 @@
       "label": "NavBar Height"
     },
     "sideBarWidth": {
-      "value": 150,
+      "value": 175,
       "label": "SideBar Width"
     }
   },
@@ -267,6 +406,50 @@
       "label": "Value 4"
     }
   },
+  "dash_simple": {
+    "title": "Simple-Dash",
+    "type": "data",
+    "value_1": {
+      "type": "",
+      "value": "",
+      "label": "Value 1"
+    },
+    "value_2": {
+      "type": "",
+      "value": "",
+      "label": "Value 2"
+    },
+    "value_3": {
+      "type": "",
+      "value": "",
+      "label": "Value 3"
+    },
+    "value_4": {
+      "type": "",
+      "value": "",
+      "label": "Value 4"
+    },
+    "value_5": {
+      "type": "",
+      "value": "",
+      "label": "Value 5"
+    },
+    "value_6": {
+      "type": "",
+      "value": "",
+      "label": "Value 6"
+    },
+    "value_7": {
+      "type": "",
+      "value": "",
+      "label": "Value 7"
+    },
+    "value_8": {
+      "type": "",
+      "value": "",
+      "label": "Value 8"
+    }
+  },
   "dash_topbar": {
     "title": "TopBar",
     "type": "data",
@@ -355,7 +538,6 @@
   "dongle_config": {
     "title": "Dongle Configuration",
     "type": "system",
-
     "fps": {
       "value": 60,
       "label": "Frames per Second",
@@ -377,6 +559,7 @@
       "label": "iBox Version"
     },
     "boxName": {
+      "type": "text",
       "value": "CarPlay",
       "label": "Box Name"
     },
