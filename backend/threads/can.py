@@ -371,6 +371,7 @@ class CANListener(can.Listener):
         self.sensors_by_id = sensors_by_id
         self.signal_sensors_by_id = signal_sensors_by_id
         self.reply_event = reply_event
+        self.reverse_active = False
 
 
         self.polling_timestamps = {}
@@ -466,5 +467,20 @@ class CANListener(can.Listener):
 
                 shared_state.update_car_data(sensor['key'], float(value))
 
+                if sensor['key'] == 'reverse':
+                    self.update_reverse(bool(value))
+
         except Exception as e:
             self.logger.error(f'[CAN] CAN listener error: {e}')
+
+    def update_reverse(self, active):
+        # Act only on changes, so a reverse input on GPIO is not overridden by every frame.
+        if active == self.reverse_active:
+            return
+
+        self.reverse_active = active
+        if active:
+            shared_state.reverseStatus.set()
+        else:
+            shared_state.reverseStatus.clear()
+        self.logger.info(f'[CAN] Reverse: {active}')

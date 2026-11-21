@@ -144,3 +144,55 @@ def test_listener_processes_multiple_fields_from_the_same_frame():
 
     assert shared_state.car_data["data"]["dashboard_brightness"] == "16.00"
     assert shared_state.car_data["data"]["light_state"] == "1.00"
+
+
+@pytest.fixture
+def preserve_reverse_status():
+    was_set = shared_state.reverseStatus.is_set()
+    shared_state.reverseStatus.clear()
+    yield
+    if was_set:
+        shared_state.reverseStatus.set()
+    else:
+        shared_state.reverseStatus.clear()
+
+
+def reverse_listener():
+    sensor = {
+        "key": "reverse",
+        "byte_index": 2,
+        "bit_index": 3,
+        "mask": None,
+        "shift": None,
+        "invert": False,
+        "scale": None,
+    }
+    return can_thread.CANListener({}, {0x00123456: [sensor]}, MagicMock())
+
+
+def reverse_frame(active):
+    return SimpleNamespace(
+        arbitration_id=0x00123456,
+        data=bytes([0x00, 0x00, 0x08 if active else 0x00, 0x00]),
+    )
+
+
+def test_listener_sets_and_clears_reverse_status(preserve_reverse_status):
+    listener = reverse_listener()
+
+    listener.on_message_received(reverse_frame(True))
+    assert shared_state.reverseStatus.is_set()
+    assert shared_state.car_data["data"]["reverse"] == "1.00"
+
+    listener.on_message_received(reverse_frame(False))
+    assert not shared_state.reverseStatus.is_set()
+    assert shared_state.car_data["data"]["reverse"] == "0.00"
+
+
+def test_listener_does_not_override_gpio_reverse_without_a_change(preserve_reverse_status):
+    listener = reverse_listener()
+    shared_state.reverseStatus.set()
+
+    listener.on_message_received(reverse_frame(False))
+
+    assert shared_state.reverseStatus.is_set()
