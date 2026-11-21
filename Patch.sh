@@ -18,7 +18,7 @@ if grep -q '^\[V-LINK' "$CONFIG" && ! grep -q '^# >>> V-Link' "$CONFIG"; then
     start=$(grep -n '^\[V-LINK' "$CONFIG" | head -n 1 | cut -d: -f1)
     length=$(tail -n "+$start" "$CONFIG" | grep -n -m 1 '^disable_splash=1' | cut -d: -f1)
     if [ "$(grep -c '^\[V-LINK' "$CONFIG")" = 1 ] && [ -n "$length" ] && [ "$length" -le 40 ]; then
-        sudo cp "$CONFIG" "$CONFIG.vlink-backup"
+        sudo cp "$CONFIG" "${CONFIG%/*}/config.backup"
         sudo sed -i -e "$((start + length - 1))a # <<< V-Link <<<" \
             -e "${start}i # >>> V-Link (managed, do not edit) >>>" "$CONFIG"
     else
