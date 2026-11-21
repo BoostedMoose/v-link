@@ -19,7 +19,7 @@ The heart of this project is the open source **V-Link app**. It's running native
 
 ## Updating and downgrading
 
-In **Settings → System → Update**, choose **Stable** or **Prerelease**, then select a release. Prereleases are grouped by branch and show a seven-character commit hash. Older releases are available in the same list for downgrades. If GitHub is unavailable while browsing releases or starting an update, the picker offers Retry and the app keeps running. Once an update starts, the app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, and reboots. If the download or archive check then fails, the installed app files are kept; the app stays stopped so you can inspect the error in the updater terminal.
+In **Settings → System → Update**, choose **Stable** or **Prerelease**, then select a release. Prereleases are grouped by branch and show a seven-character commit hash. Older releases are available in the same list for downgrades. If GitHub is unavailable while browsing releases or starting an update, the picker offers Retry and the app keeps running. Once an update starts, the app closes while the updater downloads and checks the archive, installs Python requirements, replaces the app files, updates the system components (see below), and reboots. If the download or archive check then fails, the installed app files are kept; the error stays in the updater terminal for 30 seconds, then the app starts again.
 
 The standalone updater is also available on the Pi:
 
@@ -29,13 +29,26 @@ sh ~/v-link/Update.sh
 
 It lists published releases with a `V-Link.zip` asset and prompts for a release number. This remains available after downgrading to a release that predates the in-app picker. On installations made before the updater was included in the ZIP, install a new release package once to get the standalone updater.
 
+## System components
+
+Besides the app, V-Link needs some system setup: the HAT's device tree overlays, a block in `/boot/firmware/config.txt`, the CAN network files, a udev rule, and the `uinput` module. Each release describes this setup in `updater/templates/`, and `updater/system.py` brings the Pi to it. The installer runs it, and after every update the updater runs the one from the newly installed release, so a downgrade also restores that release's setup.
+
+```sh
+python3 -I ~/v-link/updater/system.py --check        # list pending changes
+sudo python3 -I ~/v-link/updater/system.py --apply   # apply them
+```
+
+Only differences are written. Each changed file is first copied to `<file>.vlink-backup` and then replaced in one step. In `config.txt`, V-Link only changes the lines between `# >>> V-Link` and `# <<< V-Link`. The setup refuses to change `config.txt` for an unknown Raspberry Pi model, damaged markers, or a block from an older version. The CAN bitrates chosen during installation are kept. Missing apt packages are installed last, which needs an internet connection; packages that are already installed are not upgraded. Autostart and `cmdline.txt` are not managed. To hide the boot logo and cursor, append `logo.nologo vt.global_cursor_default=0` to the single line in `/boot/firmware/cmdline.txt`.
+
+Installations from v3.1.0 or a 3.2.x beta use an older `config.txt` block. When updating from v3.1.0, the old updater runs `Patch.sh` from the new release, which marks that block and applies the setup. On a 3.2.x beta, run `sh ~/v-link/Patch.sh` once after updating.
+
 ### Creating releases
 
 `frontend/package.json` is the source of the app version. The UI and Python app read it, and the release ZIP includes it. To set a version, run `npm version 3.2.0 --no-git-tag-version` from `frontend/`; this also updates `frontend/package-lock.json`. Use a prerelease version such as `3.2.0-beta.1` when appropriate. The packager checks that the frontend package and lockfile versions match.
 
-Commit all source changes and run `./development/Package.sh` from the exact commit you will tag. Upload the four files in `dist/` as separate GitHub release assets: `Install.sh`, `Uninstall.sh`, `Update.sh`, and `V-Link.zip`. The packager refuses a dirty checkout. The ZIP contains the app and its updater; the installer and uninstaller are separate downloads. The standalone `Update.sh` asset is a launcher for an existing installation that also contains `updater/`. The installer currently installs the latest stable release by default, even if downloaded from a prerelease page. The package contains a commit manifest; the updater checks that its hash matches the release tag before installing. Mark a prerelease with GitHub's **Set as a pre-release** option. When creating its tag in GitHub, choose the source branch in **Target**. For an existing tag, put `V-Link-Branch: dev` (or another branch name, such as `factory-screen`) on its own line in the release notes; a tag like `dev/v3.2.0-beta.1` also identifies the branch. This keeps prereleases from different branches separate in the picker.
+Commit all source changes and run `./development/Package.sh <tag>` from the exact commit you will tag, for example `./development/Package.sh v3.2.1`. The tag, without an optional `branch/` prefix and `v`, must match the app version. Upload the four files in `dist/` as separate GitHub release assets: `Install.sh`, `Uninstall.sh`, `Update.sh`, and `V-Link.zip`. The packager refuses a dirty checkout. The ZIP contains the app and its updater; the installer and uninstaller are separate downloads. The standalone `Update.sh` asset is a launcher for an existing installation that also contains `updater/`. The installer currently installs the latest stable release by default, even if downloaded from a prerelease page. To test a release before publishing it, pass the ZIP to the installer: `sudo ./Install.sh path/to/V-Link.zip`. The package contains a commit manifest; the updater checks that its hash matches the release tag before installing. Mark a prerelease with GitHub's **Set as a pre-release** option. When creating its tag in GitHub, choose the source branch in **Target**. For an existing tag, put `V-Link-Branch: dev` (or another branch name, such as `factory-screen`) on its own line in the release notes; a tag like `dev/v3.2.0-beta.1` also identifies the branch. This keeps prereleases from different branches separate in the picker.
 
-Updates do not run `Patch.sh` automatically. A release that requires system configuration changes should include explicit migration instructions in its release notes.
+System configuration changes go into `updater/templates/` and `updater/system.py`, so updates apply them; see System components. If the repository contains `Patch.sh`, the packager includes it in the ZIP. It only exists for the migration from v3.1.0 and the 3.2.x betas. Keep it as long as v3.1.0 installations may still update, because their updater always installs the latest release and only migrates through the `Patch.sh` it contains.
 
 ### > System Requirements:
 ```

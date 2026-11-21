@@ -1,0 +1,5 @@
+SUBSYSTEM=="usb", ATTR{idVendor}=="1314", ATTR{idProduct}=="152*", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="spi0.1", NAME="can1"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="spi0.2", NAME="can2"
+KERNEL=="ttyS0", MODE="0660", GROUP="plugdev"
+KERNEL=="uinput", MODE="0660", GROUP="plugdev"

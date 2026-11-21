@@ -48,10 +48,10 @@ Install the frontend dependencies in `frontend/` first. The `--install` or `--ci
 ## Create release assets
 
 ```bash
-./development/Package.sh
+./development/Package.sh v3.2.1
 ```
 
-Run from a clean, committed checkout matching the release tag. Output remains in the repository's `dist/` directory: `Install.sh`, `Uninstall.sh`, `Update.sh`, and `V-Link.zip`. The development utilities are not included in the release ZIP. The hardware test remains at the repository root and is included in releases. See the repository README for the release process.
+Run from a clean, committed checkout matching the release tag. The tag argument must match the version in `frontend/package.json` and is written into the ZIP's commit manifest. Output remains in the repository's `dist/` directory: `Install.sh`, `Uninstall.sh`, `Update.sh`, and `V-Link.zip`. The development utilities are not included in the release ZIP. The hardware test remains at the repository root and is included in releases. See the repository README for the release process.
 
 ## Diagnostics
 

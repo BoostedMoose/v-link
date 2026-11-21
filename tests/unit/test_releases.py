@@ -122,6 +122,24 @@ def test_hardware_test_install_and_update(tmp_path, previous, incoming, expected
     assert (app / "Hardware-Test.py").read_text() == expected
 
 
+def test_update_replaces_system_templates_and_removes_old_patch(tmp_path):
+    app = tmp_path / "app"
+    stage = tmp_path / "stage"
+    (app / "updater" / "templates").mkdir(parents=True)
+    (app / "updater" / "templates" / "old.rules").write_text("old")
+    (app / "Patch.sh").write_text("old patch")
+    (stage / "updater" / "templates").mkdir(parents=True)
+    (stage / "updater" / "releases.py").write_text("new updater")
+    (stage / "updater" / "templates" / "new.rules").write_text("new")
+    (stage / "Update.sh").write_text("new launcher")
+
+    releases._replace(stage, app, {"commit": SHA})
+
+    assert (app / "updater" / "templates" / "new.rules").read_text() == "new"
+    assert not (app / "updater" / "templates" / "old.rules").exists()
+    assert not (app / "Patch.sh").exists()
+
+
 def test_file_swap_failure_restores_previous_app(tmp_path, monkeypatch):
     app = tmp_path / "app"
     app.mkdir()

@@ -1,0 +1,8 @@
+[Match]
+Name={name}
+
+[CAN]
+BitRate={bitrate}
+
+[Network]
+# raw CAN
