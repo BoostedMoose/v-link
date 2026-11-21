@@ -109,7 +109,7 @@ def logger(verbose=True):
     check_dirs()
 
     log = logging.getLogger("vlink")
-    log.setLevel(logging.DEBUG if verbose else logging.CRITICAL)
+    log.setLevel(logging.DEBUG if verbose else logging.WARNING)
     log.propagate = False
 
     # Reset handlers to avoid duplicates if logger() is called again
@@ -121,7 +121,7 @@ def logger(verbose=True):
 
     # New current logfile
     file_handler = logging.FileHandler(LOG_FILE, mode="w")
-    file_handler.setLevel(logging.DEBUG if verbose else logging.CRITICAL)
+    file_handler.setLevel(logging.DEBUG if verbose else logging.WARNING)
     file_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(file_format)
     log.addHandler(file_handler)

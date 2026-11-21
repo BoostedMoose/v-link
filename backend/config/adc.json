@@ -6,8 +6,8 @@
         "pressure": {
             "app_id": "oilp",
             "label": "Oil Pressure",
-            "unit": "kPa",
-            "scale": "(value / 10)",
+            "unit": "Bar",
+            "scale": "(value / 100)",
             "min_value": 0,
             "max_value": 1000,
             "limit_start": 3000,

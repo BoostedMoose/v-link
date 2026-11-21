@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useNamespaces } from '../../socket/Namespaces';
+import { useNamespaces } from '@/socket/Namespaces';
 const socket = useNamespaces();
 
 interface DisplayProps {
@@ -12,9 +12,9 @@ const Display: React.FC<DisplayProps> = ({ autoOpen }) => {
     useEffect(() => {
         if (autoOpen) {
             socket.log.emit('info', 'Opening RTI')
-            socket.sys.emit("systemTask", "rti")
+            socket.sys.emit("systemTask", "rti_open")
         }
-    }, [])
+    }, [autoOpen])
 
     return null;
 

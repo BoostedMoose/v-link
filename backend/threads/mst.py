@@ -66,6 +66,9 @@ class PiMost:
                     self.connected = False
                     self.ser = None
                     self.port = None
+            else:
+                # Wait for MOSTThread to find the device instead of spinning.
+                time.sleep(.5)
 
     def parse_message(self, data, length):
         try: 

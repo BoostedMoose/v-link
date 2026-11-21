@@ -2,10 +2,11 @@
 // MIT License
 import { getDecoderConfig, isKeyFrame } from './lib/utils'
 import { InitEvent, RenderEvent, WorkerEvent } from './RenderEvents'
+import { Canvas2DRenderer } from './Canvas2DRenderer'
 import { WebGL2Renderer } from './WebGL2Renderer'
 import { WebGLRenderer } from './WebGLRenderer'
 import { WebGPURenderer } from './WebGPURenderer'
-import { useNamespaces } from '../../../socket/Namespaces'
+import { useNamespaces } from '@/socket/Namespaces'
 
 export interface FrameRenderer {
   draw(data: VideoFrame): void
@@ -27,6 +28,8 @@ export class RenderWorker {
   private frameCount = 0
   private timestamp = 0
   private fps = 0
+  private decoderConfig: VideoDecoderConfig | null = null
+  private streamStarted = false
 
   private onVideoDecoderOutput = (frame: VideoFrame) => {
     // Update statistics.
@@ -35,6 +38,16 @@ export class RenderWorker {
     } else {
       const elapsed = (performance.now() - this.startTime) / 1000
       this.fps = ++this.frameCount / elapsed
+    }
+
+    if (!this.streamStarted) {
+      this.streamStarted = true
+      scope.postMessage({
+        type: 'streamStarted',
+        config: this.decoderConfig,
+        displayWidth: frame.displayWidth,
+        displayHeight: frame.displayHeight,
+      })
     }
 
     // Schedule the frame to be rendered.
@@ -63,29 +76,65 @@ export class RenderWorker {
   private onVideoDecoderOutputError = (err: Error) => {
     console.error(`H264 Render worker decoder error`, err)
     socket.log.emit('error', `(CarPlay) H264 Render worker decoder error: ${err}`)
+    this.resetDecoder('decoder error')
   }
 
-  private decoder = new VideoDecoder({
-    output: this.onVideoDecoderOutput,
-    error: this.onVideoDecoderOutputError,
-  })
+  private createDecoder = () => new VideoDecoder({
+      output: this.onVideoDecoderOutput,
+      error: this.onVideoDecoderOutputError,
+    })
+
+  private decoder = this.createDecoder()
+
+  private resetDecoder = (reason: string) => {
+    try {
+      this.decoder.close()
+    } catch {
+      // A decoder error may already have closed it.
+    }
+    this.pendingFrame?.close()
+    this.pendingFrame = null
+    this.decoder = this.createDecoder()
+    this.decoderConfig = null
+    this.streamStarted = false
+    this.timestamp = 0
+    this.frameCount2 = 0
+    socket.log.emit('debug', `(CarPlay) Decoder reset: ${reason}`)
+  }
+
+  private configChanged = (next: VideoDecoderConfig) =>
+    !this.decoderConfig ||
+    this.decoderConfig.codec !== next.codec ||
+    this.decoderConfig.codedWidth !== next.codedWidth ||
+    this.decoderConfig.codedHeight !== next.codedHeight
 
   init = (event: InitEvent) => {
-    switch (event.renderer) {
-      case 'webgl':
-        this.renderer = new WebGLRenderer(event.canvas)
+    socket.log.emit('debug', `(CarPlay) Render worker init received, renderer: ${event.renderer}`)
+    const candidates: Array<[string, () => FrameRenderer]> = [
+      ['webgl',   () => new WebGLRenderer(event.canvas)],
+      ['webgl2',  () => new WebGL2Renderer(event.canvas)],
+      // ['webgpu',  () => new WebGPURenderer(event.canvas)],
+      ['canvas2d', () => new Canvas2DRenderer(event.canvas)],
+    ]
+    for (const [name, create] of candidates) {
+      try {
+        this.renderer = create()
+        socket.log.emit('debug', `(CarPlay) Renderer initialized: ${name}`)
         break
-      case 'webgl2':
-        this.renderer = new WebGL2Renderer(event.canvas)
-        break
-      case 'webgpu':
-        this.renderer = new WebGPURenderer(event.canvas)
-        break
+      } catch (e) {
+        socket.log.emit('error', `(CarPlay) Renderer init failed (${name}): ${e}`)
+      }
     }
     this.videoPort = event.videoPort
     this.videoPort.onmessage = ev => {
-      this.onFrame(ev.data as RenderEvent)
+      const message = ev.data as WorkerEvent
+      if (message.type === 'reset') {
+        this.resetDecoder('projection session stopped')
+      } else {
+        this.onFrame(message as RenderEvent)
+      }
     }
+    socket.log.emit('debug', '(CarPlay) Render worker videoPort ready')
 
     if (event.reportFps) {
       setInterval(() => {
@@ -96,23 +145,28 @@ export class RenderWorker {
     }
   }
 
+  private frameCount2 = 0
+
   onFrame = (event: RenderEvent) => {
+    this.frameCount2++
+    if (this.frameCount2 === 1) {
+      console.log(`(CarPlay) First renderer frame received: ${event.frameData.byteLength} bytes`)
+      socket.log.emit('debug', `(CarPlay) First video frame received, decoder state: ${this.decoder.state}`)
+    }
     const frameData = new Uint8Array(event.frameData)
 
-    if (this.decoder.state === 'unconfigured') {
-      const decoderConfig = getDecoderConfig(frameData)
-      if (decoderConfig) {
+    const decoderConfig = getDecoderConfig(frameData)
+    if (decoderConfig && this.configChanged(decoderConfig)) {
+      if (this.decoder.state !== 'unconfigured') this.resetDecoder('stream configuration changed')
+      try {
         this.decoder.configure(decoderConfig)
-        console.log(`(CarPlay) Decoder-config: ${decoderConfig}`);
-        socket.log.emit('debug', `(CarPlay) Decoder-config: ${decoderConfig}`)
-
-
-        /* V-Link Mod */
-        scope.postMessage({
-          type: 'streamStarted',
-          config: decoderConfig,
-        });
-        /* V-Link Mod */
+        this.decoderConfig = decoderConfig
+        const { codec, codedWidth, codedHeight } = decoderConfig
+        console.log(`(CarPlay) Decoder-config: codec=${codec} ${codedWidth}x${codedHeight}`);
+        socket.log.emit('debug', `(CarPlay) Decoder-config: codec=${codec} ${codedWidth}x${codedHeight}`)
+      } catch (error) {
+        socket.log.emit('error', `(CarPlay) Decoder configure failed: ${error}`)
+        this.resetDecoder('configuration failed')
       }
     }
     if (this.decoder.state === 'configured') {
@@ -127,6 +181,7 @@ export class RenderWorker {
       } catch (e) {
         console.error(`H264 Render Worker decode error`, e)
         socket.log.emit('error', `(CarPlay) H264 Render worker decoder error: ${e}`)
+        this.resetDecoder('decode failed')
       }
     }
   }

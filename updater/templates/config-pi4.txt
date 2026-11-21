@@ -1,0 +1,19 @@
+#Enable GPIO 0&1
+disable_poe_fan=1
+force_eeprom_read=0
+
+#Enable devicetree overlays
+dtparam=spi=on
+enable_uart=1
+dtparam=i2c_arm=on
+
+dtoverlay=v-link
+dtoverlay=uart3
+dtoverlay=mcp2515-can1,oscillator=16000000,interrupt=24
+dtoverlay=mcp2515-can2,oscillator=16000000,interrupt=22
+
+#Configure IGN logic
+dtoverlay=gpio-poweroff,gpiopin=0
+
+#No Splash on boot
+disable_splash=1

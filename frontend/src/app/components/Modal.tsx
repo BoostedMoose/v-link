@@ -1,12 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import ReactDOM from 'react-dom';
 import styled from 'styled-components';
-import { Typography } from '../../theme/styles/Typography';
-import { Button } from '../../theme/styles/Inputs';
-import { APP } from '../../store/Store';
+import { Typography } from '@/theme/styles/Typography';
+import { Button } from '@/theme/styles/Inputs';
+import { APP } from '@/store/Store';
 
-const Overlay = styled.div`
-  position: fixed;
+interface OverlayProps {
+  $visible: boolean;
+}
+
+interface ContentProps {
+  $visible: boolean;
+}
+
+const Overlay = styled.div<OverlayProps>`
+  position: absolute;
   top: 0;
   left: 0;
   width: 100%;
@@ -22,16 +29,24 @@ const Overlay = styled.div`
   transition: opacity 0.3s ease-in-out;
 `;
 
-const Content = styled.div`
+const Content = styled.div<ContentProps>`
+  position: relative;
+  box-sizing: border-box;
   background: #151515;
-  padding: 30px;
+  padding: clamp(12px, 3vh, 30px);
   border-radius: 10px;
   text-align: center;
   color: none;
   white-space: pre-line;
 
-  min-width: 300px;
-  gap: 20px;
+  min-width: min(300px, calc(100vw - 20px));
+  max-width: calc(100vw - 20px);
+  max-height: calc(100vh - 20px);
+  max-height: calc(100dvh - 20px);
+  overflow-y: auto;
+  gap: clamp(8px, 2vh, 20px);
+
+  > h3 { margin: 0; line-height: 1.1; max-width: calc(100% - 52px); }
 
   display: flex;
   flex-direction: column;
@@ -40,21 +55,31 @@ const Content = styled.div`
   opacity: ${({ $visible }) => ($visible ? 1 : 0)};
   transform: ${({ $visible }) => ($visible ? 'scale(1)' : 'scale(0.9)')};
   transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+
+  @media (max-width: 520px), (max-height: 300px) {
+    width: calc(100% - 24px);
+    min-width: 0;
+    padding: 18px 12px;
+    gap: 10px;
+  }
 `;
 
 const Exit = styled.button`
   position: absolute;
-  top: -30px;
-  right: -30px;
+  top: 8px;
+  right: 8px;
   border: none;
-  border-radius: 25px;
-  width: 25px;
-  height: 25px;
-  background: #151515;
-  font-size: 10px;
+  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  background: #303030;
+  font-size: 24px;
+  line-height: 1;
   font-weight: bold;
   cursor: pointer;
   color: #DBDBDB;
+
+  &:hover, &:focus-visible { background: #505050; }
 `;
 
 const Modal = () => {
@@ -77,21 +102,20 @@ const Modal = () => {
 
   if (!shouldRender) return null; // Prevent render when modal is fully closed
 
-  return ReactDOM.createPortal(
+  return (
     <Overlay $visible={modalSettings.visible}>
       <Content $visible={modalSettings.visible}>
         <Display2>{modalSettings.title}</Display2>
         {modalSettings.content}
         {modalSettings.exit ? 
-        <Exit onClick={closeModal}>X</Exit>
+        <Exit type="button" aria-label="Close modal" onClick={closeModal}>×</Exit>
         : null }
       </Content>
-    </Overlay>,
-    document.getElementById('root')
+    </Overlay>
   );
 };
 
-const openModal = (title, body, button, action) => {
+const openModal = (title: string, body: React.ReactNode, button?: string, action?: () => void) => {
   const appUpdate = APP.getState().update;
 
 
