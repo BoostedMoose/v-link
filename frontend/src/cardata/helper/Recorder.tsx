@@ -20,13 +20,11 @@ const Recorder: React.FC<RecorderProps> = ({ data, timestamp, resolution, record
     const datasets = Object.keys(data)
         .filter(key => !key.endsWith('_ts'))
         .map((sensorLabel) => {
-            const config = modules['sensorType']?.(settings);
-
             return {
                 label: sensorLabel,
                 sensorLabel,
-                yMin: config?.min_value ?? -Infinity,
-                yMax: config?.max_value ?? Infinity,
+                yMin: -Infinity,
+                yMax: Infinity,
             };
         });
 

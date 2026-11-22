@@ -1,5 +1,6 @@
 import styled, { useTheme } from 'styled-components';
 import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
+import type { StoreApi } from 'zustand';
 import { Typography } from '@/theme/styles/Typography';
 import { CustomIcon } from '@/theme/styles/Icons';
 
@@ -120,13 +121,9 @@ const DataList = (dashPage: DashPageSettings, itemCount: number, columns: number
 
                 // safely fetch the sensor config
                 if (dataType != "") {
-                    const moduleSelector = modules[dataType] as
-                        | ((select: (s: ModuleState) => unknown) => unknown)
-                        | undefined;
-                    sensor = (moduleSelector?.(
-                        (state: ModuleState) =>
-                            (state.settings.sensors as Record<string, unknown> | undefined)?.[dataName]
-                    ) as SensorConfig | undefined) ?? {};
+                    // getState instead of the store hook: a hook in a loop breaks the hook order
+                    const store = modules[dataType] as StoreApi<ModuleState> | undefined;
+                    sensor = ((store?.getState().settings.sensors as Record<string, unknown> | undefined)?.[dataName] as SensorConfig | undefined) ?? {};
                 }
 
                 const dataLabel = sensor.label ?? "N/A";

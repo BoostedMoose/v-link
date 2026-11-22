@@ -1,4 +1,5 @@
 import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
+import type { StoreApi } from 'zustand';
 import styled, { useTheme } from 'styled-components';
 import { useState, useEffect, useRef } from 'react';
 import { isCompactViewport } from '@/app/helper/Layout';
@@ -11,7 +12,7 @@ const cos = Math.cos;
 const sin = Math.sin;
 const π = Math.PI;
 
-type ModuleSelector = ((select: (s: ModuleState) => unknown) => unknown) | undefined;
+type ModuleSelector = StoreApi<ModuleState> | undefined;
 
 type SensorConfig = { label?: string; max_value?: number; min_value?: number; limit_start?: number; unit?: string };
 
@@ -87,8 +88,9 @@ export const RadialGauge = ({
     // Load interface config based on type
     const store = modules[type] as ModuleSelector;
     // Use safe lookup for sensor settings
+    // getState instead of the store hook: a conditional hook call breaks the hook order
     const settings: SensorConfig = store
-        ? (store as (select: (s: ModuleState) => unknown) => unknown)((state) => (state.settings.sensors as Record<string, unknown> | undefined)?.[sensor]) as SensorConfig || {} as SensorConfig
+        ? (store.getState().settings.sensors as Record<string, unknown> | undefined)?.[sensor] as SensorConfig || {} as SensorConfig
         : {} as SensorConfig;
 
     const label = settings.label ?? "N/A";

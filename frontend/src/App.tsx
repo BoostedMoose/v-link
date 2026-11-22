@@ -13,6 +13,7 @@ import Init from './app/Init';
 import Splash from './app/Splash';
 import Content from './app/Content';
 import { Modal } from './app/components/Modal';
+import ErrorBoundary from './app/components/ErrorBoundary';
 import { LocalMediaProvider } from './app/pages/music/LocalMediaProvider';
 import { sendLocalMediaCommand } from './app/pages/music/localMediaCommands';
 import { routeHardwareAction } from './mediaActions';
@@ -211,7 +212,9 @@ function App() {
                 />
 
                 <Cardata />
-                <Content />
+                <ErrorBoundary onError={(error, componentStack) => socket.log.emit('error', `UI crashed: ${error.message}${componentStack}`)}>
+                  <Content />
+                </ErrorBoundary>
               </>
             ) : (
               <></>

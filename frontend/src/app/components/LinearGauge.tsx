@@ -2,6 +2,7 @@ import styled, { useTheme } from 'styled-components';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 
 import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
+import type { StoreApi } from 'zustand';
 import { Display3, Typography } from '@/theme/styles/Typography';
 import { isCompactViewport } from '@/app/helper/Layout';
 
@@ -77,7 +78,7 @@ const Custom = styled.div`
     }
 `;
 
-type ModuleSelector = ((select: (s: ModuleState) => unknown) => unknown) | undefined;
+type ModuleSelector = StoreApi<ModuleState> | undefined;
 
 type SensorConfig = { unit?: string; max_value?: number; min_value?: number; limit_start?: number };
 
@@ -116,7 +117,8 @@ const LinearGauge = () => {
     // Helper to safely get sensor config
     const getSensorConfig = (moduleSelector: ModuleSelector, sensorName: string | undefined): SensorConfig => {
         if (!moduleSelector || !sensorName) return {};
-        const sensor = (moduleSelector as (select: (s: ModuleState) => unknown) => unknown)((state) => (state.settings.sensors as Record<string, unknown> | undefined)?.[sensorName]);
+        // getState instead of the store hook: a conditional hook call breaks the hook order
+        const sensor = (moduleSelector.getState().settings.sensors as Record<string, unknown> | undefined)?.[sensorName];
         return (sensor && typeof sensor === 'object') ? sensor as SensorConfig : {};
     };
 

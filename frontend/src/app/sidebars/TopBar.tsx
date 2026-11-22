@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { APP, DATA, ModuleState, useThemeColor } from '@/store/Store';
+import type { StoreApi } from 'zustand';
 import styled, { css, useTheme } from 'styled-components';
 
 import { IconSmall, CustomIcon } from '@/theme/styles/Icons';
@@ -116,11 +117,10 @@ const TopBar = () => {
   const valueName = dashSettings?.value?.value ?? '';
   const valueType = dashSettings?.value?.type ?? '';
 
+  // getState instead of the store hook: a hook called only when a value is set breaks the hook order
   const sensor: SensorConfig =
     valueType && valueName && modules[valueType]
-      ? ((modules[valueType] as (select: (s: ModuleState) => unknown) => unknown)(
-          (state: ModuleState) => (state.settings.sensors as Record<string, unknown> | undefined)?.[valueName]
-        ) as SensorConfig | undefined) ?? {}
+      ? (((modules[valueType] as StoreApi<ModuleState>).getState().settings.sensors as Record<string, unknown> | undefined)?.[valueName] as SensorConfig | undefined) ?? {}
       : {};
 
   const valueID    = sensor.app_id ?? "err";

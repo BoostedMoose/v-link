@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import styled, { useTheme } from 'styled-components';
 
 import { DATA, APP, ModuleState, useThemeColor, ThemeColorKey } from '@/store/Store';
+import type { StoreApi } from 'zustand';
 import { CustomIcon } from '@/theme/styles/Icons';
 import { isCompactViewport } from '@/app/helper/Layout';
 
@@ -102,13 +103,10 @@ const DataBox = () => {
         name: string | undefined,
     ): SensorConfig => {
         if (!type) return {}; // empty type → return empty object
-        const selector = moduleMap[type] as
-            | ((select: (s: ModuleState) => unknown) => unknown)
-            | undefined;
-        if (!selector) return {};
-        const sensor = selector((state: ModuleState) =>
-            (state.settings.sensors as Record<string, unknown> | undefined)?.[name ?? '']
-        );
+        // getState instead of the store hook: a conditional hook call breaks the hook order
+        const store = moduleMap[type] as StoreApi<ModuleState> | undefined;
+        if (!store) return {};
+        const sensor = (store.getState().settings.sensors as Record<string, unknown> | undefined)?.[name ?? ''];
         return sensor && typeof sensor === 'object' ? (sensor as SensorConfig) : {};
     };
 

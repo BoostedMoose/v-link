@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import styled, { useTheme } from 'styled-components';
 
 import { DATA, APP, ModuleState, useThemeColor } from '@/store/Store';
+import type { StoreApi } from 'zustand';
 import convert from 'color-convert';
 
 // ── local setting-shape types ─────────────────────────────────────────────────
@@ -109,14 +110,13 @@ const DataChart = ({
         const sensor = setting?.value ?? '';
         const type = setting?.type;
 
-        const moduleSelector = type && sensor
-            ? (modules[type] as ((select: (s: ModuleState) => unknown) => unknown) | undefined)
+        // getState instead of the store hook: a hook in a loop breaks the hook order
+        const store = type && sensor
+            ? (modules[type] as StoreApi<ModuleState> | undefined)
             : undefined;
 
-        const config: SensorConfig = moduleSelector
-            ? (moduleSelector((state: ModuleState) =>
-                (state.settings.sensors as Record<string, unknown> | undefined)?.[sensor]
-              ) as SensorConfig | undefined) ?? {}
+        const config: SensorConfig = store
+            ? ((store.getState().settings.sensors as Record<string, unknown> | undefined)?.[sensor] as SensorConfig | undefined) ?? {}
             : {};
 
         const value = data[sensor];
