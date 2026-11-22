@@ -84,7 +84,7 @@ class Config:
                 self.sensors[iface].append(sensor_entry)
 
             except Exception as e:
-                self.logger.error(f'[CAN] Error loading sensor "{key}" on "{iface}": {e}')
+                self.logger.error(f'[CAN] Error loading sensor "{key}" on "{sensor.get("interface")}": {e}')
 
     def load_signal_sensors(self):
         for sensor in self.can_settings.get('signal_sensors', []):
@@ -151,6 +151,7 @@ class CANThread(threading.Thread):
         self.can_buses = {}
         self.notifiers = {}
         self.broadcast_tasks = []
+        self.listeners = []
 
         
     def run(self):
@@ -259,6 +260,7 @@ class CANThread(threading.Thread):
                     self.logger,
                     reply_event=reply_event if wait_for_ecu else None,
                 )
+                self.listeners.append(listener)
                 notifier = can.Notifier(bus, [listener])
                 self.notifiers[channel] = notifier
 
@@ -280,6 +282,10 @@ class CANThread(threading.Thread):
                 notifier.stop()
             except Exception as e:
                 self.logger.error(f'[CAN] Error stopping Notifier: {e}')
+
+        # A reverse signal set by CAN would otherwise stay active after the stop
+        for listener in self.listeners:
+            listener.update_reverse(False)
 
         for bus in self.can_buses.values():
             bus.shutdown()
@@ -307,6 +313,8 @@ def build_poll_cycle(sensors: list[dict]) -> list[dict]:
 
 class CANScheduler(threading.Thread):
     REPLY_TIMEOUT = 0.1
+    RETRY_DELAY_MIN = 0.5
+    RETRY_DELAY_MAX = 5.0
 
     def __init__(self, sensors, can_bus, is_extended, logger, reply_event=None, wait_for_ecu=False):
         super().__init__()
@@ -332,6 +340,8 @@ class CANScheduler(threading.Thread):
     def run(self):
         self.logger.info('[CAN] Message Scheduler started.')
         index = 0
+        failed_sends = 0
+        retry_delay = self.RETRY_DELAY_MIN
 
         while not self._stop_event.is_set():
             sensor = self.poll_cycle[index % self.cycle_length]
@@ -349,6 +359,11 @@ class CANScheduler(threading.Thread):
 
                 self.can_bus.send(msg)
 
+                if failed_sends:
+                    self.logger.info(f'[CAN] Bus available again after {failed_sends} failed send(s).')
+                    failed_sends = 0
+                    retry_delay = self.RETRY_DELAY_MIN
+
                 if self.wait_for_ecu and self.reply_event:
                     replied = self.reply_event.wait(timeout=self.REPLY_TIMEOUT)
                     if not replied:
@@ -357,9 +372,12 @@ class CANScheduler(threading.Thread):
                 time.sleep(0.01)
 
             except Exception as e:
-                self.logger.error(f'[CAN] Failed to send message for "{sensor["label"]}": {e}')
-                self.logger.error(f'[CAN] Bus not available, stopping scheduler.')
-                self._stop_event.set()
+                if not failed_sends:
+                    self.logger.error(f'[CAN] Failed to send message for "{sensor["label"]}": {e}')
+                    self.logger.error(f'[CAN] Bus not available, retrying.')
+                failed_sends += 1
+                self._stop_event.wait(retry_delay)
+                retry_delay = min(retry_delay * 2, self.RETRY_DELAY_MAX)
 
     def stop(self):
         self._stop_event.set()
@@ -442,7 +460,7 @@ class CANListener(can.Listener):
                 if self.reply_event:
                     self.reply_event.set()
                 
-                return
+                break
 
             for sensor in self.signal_sensors_by_id.get(msg.arbitration_id, []):
                 byte_index = sensor['byte_index']

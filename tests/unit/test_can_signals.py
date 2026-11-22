@@ -196,3 +196,32 @@ def test_listener_does_not_override_gpio_reverse_without_a_change(preserve_rever
     listener.on_message_received(reverse_frame(False))
 
     assert shared_state.reverseStatus.is_set()
+
+
+def test_stop_thread_clears_reverse_set_by_can(preserve_reverse_status, monkeypatch):
+    monkeypatch.setattr(can_thread, "Config", MagicMock())
+    thread = can_thread.CANThread(MagicMock())
+    listener = reverse_listener()
+    thread.listeners.append(listener)
+    listener.on_message_received(reverse_frame(True))
+
+    thread.stop_thread()
+
+    assert not shared_state.reverseStatus.is_set()
+
+
+def test_scheduler_keeps_sending_after_a_failed_send(monkeypatch):
+    monkeypatch.setattr(can_thread.CANScheduler, "RETRY_DELAY_MIN", 0)
+    sensor = {"key": "boost", "label": "Boost", "priority": 1, "req_id": [0x000FFFFE], "message_bytes": [0xCD] * 8}
+    bus = MagicMock()
+    scheduler = can_thread.CANScheduler([sensor], bus, True, MagicMock())
+
+    def send(msg):
+        if bus.send.call_count == 1:
+            raise can_thread.can.CanError("bus off")
+        scheduler.stop()
+
+    bus.send.side_effect = send
+    scheduler.run()
+
+    assert bus.send.call_count == 2
