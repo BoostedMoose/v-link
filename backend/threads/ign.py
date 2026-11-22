@@ -28,7 +28,7 @@ class IGNThread(threading.Thread):
 
             self.monitor_ignition()
         except Exception as e:
-            shared_state.ignStatus.clear()
+            # Keep ignStatus as is: clearing it reads as ignition off and triggers auto shutdown
             requested_chip = self.chip_id if self.chip_id is not None else 'auto'
             self.logger.error(
                 f'[Ignition] GPIO initialization failed (chip={requested_chip}, '

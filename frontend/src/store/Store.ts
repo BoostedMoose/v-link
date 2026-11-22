@@ -41,6 +41,7 @@ interface ModalState {
   title: string | null;
   content: ReactNode;
   exit?: boolean | null;
+  onExit?: (() => void) | null;
 }
 
 interface SystemState {

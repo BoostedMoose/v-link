@@ -135,8 +135,8 @@ def test_ignition_thread_uses_detected_chip(monkeypatch):
     assert thread.chip is None
 
 
-@pytest.mark.parametrize("thread_class", [cam.CAMThread, ign.IGNThread])
-def test_gpio_initialization_failure_does_not_escape_thread_run(thread_class, monkeypatch):
+@pytest.mark.parametrize("thread_class, status_kept", [(cam.CAMThread, False), (ign.IGNThread, True)])
+def test_gpio_initialization_failure_does_not_escape_thread_run(thread_class, status_kept, monkeypatch):
     logger = MagicMock()
     module = cam if thread_class is cam.CAMThread else ign
     status = shared_state.reverseStatus if module is cam else shared_state.ignStatus
@@ -151,7 +151,7 @@ def test_gpio_initialization_failure_does_not_escape_thread_run(thread_class, mo
     thread.run()
 
     logger.error.assert_called()
-    assert not status.is_set()
+    assert status.is_set() is status_kept
 
 
 def test_camera_power_toggle_detects_chip_when_first_used(monkeypatch):

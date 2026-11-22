@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react';
 import { useNamespaces } from '@/socket/Namespaces';
 import { openModal, closeModal } from '@/app/components/Modal';
+import { APP } from '@/store/Store';
 
 
 const socket = useNamespaces();
+const MODAL_TITLE = 'Ignition Off';
 
 interface DisplayProps {
   ignition: boolean;
@@ -50,9 +52,10 @@ const Ignition: React.FC<DisplayProps> = ({
 
   const showShutdownModal = () => {
     openModal(
-      'Ignition Off',
+      MODAL_TITLE,
       `System will shut down in ${shutdownDelay} seconds to prevent battery drain. \nClick to dismiss for ${messageTimeout} minutes.`,
       'DISMISS',
+      handleDismiss,
       handleDismiss
     );
   };
@@ -67,9 +70,11 @@ const Ignition: React.FC<DisplayProps> = ({
       if (shutdownTimer.current) clearTimeout(shutdownTimer.current);
       if (extendedTimer.current) clearTimeout(extendedTimer.current);
 
-      updateApp((state) => {
-        state.system.modal.visible = false;
-      });
+      if (APP.getState().system.modal.title === MODAL_TITLE) {
+        updateApp((state) => {
+          state.system.modal.visible = false;
+        });
+      }
     }
 
     // Cleanup timers on component unmount or when conditions change

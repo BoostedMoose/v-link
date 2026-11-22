@@ -108,14 +108,14 @@ const Modal = () => {
         <Display2>{modalSettings.title}</Display2>
         {modalSettings.content}
         {modalSettings.exit ? 
-        <Exit type="button" aria-label="Close modal" onClick={closeModal}>×</Exit>
+        <Exit type="button" aria-label="Close modal" onClick={modalSettings.onExit ?? closeModal}>×</Exit>
         : null }
       </Content>
     </Overlay>
   );
 };
 
-const openModal = (title: string, body: React.ReactNode, button?: string, action?: () => void) => {
+const openModal = (title: string, body: React.ReactNode, button?: string, action?: () => void, onExit?: () => void) => {
   const appUpdate = APP.getState().update;
 
 
@@ -130,6 +130,7 @@ const openModal = (title: string, body: React.ReactNode, button?: string, action
     state.system.modal.visible = true;
     state.system.modal.title = title;
     state.system.modal.exit = true;
+    state.system.modal.onExit = onExit ?? null;
     state.system.modal.content = content;
   });
 };
@@ -141,6 +142,7 @@ const closeModal = () => {
     state.system.modal.visible = false;
     state.system.modal.title = null;
     state.system.modal.exit = null;
+    state.system.modal.onExit = null;
     state.system.modal.content = null;
   });
 };
