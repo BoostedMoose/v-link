@@ -1,8 +1,19 @@
 """Unit tests for the Chromium application thread."""
 
+import os
+import socket
 from unittest.mock import MagicMock
 
+import pytest
+
 from backend.threads import app as app_module
+
+
+@pytest.fixture(autouse=True)
+def isolated_browser_files(tmp_path, monkeypatch):
+    """Keep the Chromium log and profile lock out of the real home directory."""
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setattr(app_module, 'CHROMIUM_LOG', str(tmp_path / 'chromium.txt'))
 
 
 def test_start_browser_passes_each_chromium_flag_as_separate_argument(monkeypatch):
@@ -87,3 +98,29 @@ def test_browser_shutdown_accepts_already_exited_group(monkeypatch):
     app_thread.close_browser()
     assert app_thread.browser is None
     app_thread.logger.error.assert_not_called()
+
+
+def test_crashed_browser_is_restarted_until_the_limit(monkeypatch):
+    monkeypatch.setattr(app_module.APPThread, 'RESTART_DELAY', 0)
+    app_thread = app_module.APPThread(MagicMock())
+    start_browser = MagicMock()
+    monkeypatch.setattr(app_thread, 'start_browser', start_browser)
+
+    for _ in range(app_thread.MAX_RESTARTS + 1):
+        app_thread._restart_browser(1)
+
+    assert start_browser.call_count == app_thread.MAX_RESTARTS
+    assert app_thread._monitor is False
+
+
+@pytest.mark.parametrize('same_host', [False, True])
+def test_profile_lock_is_removed_only_for_another_hostname(tmp_path, same_host):
+    lock_host = socket.gethostname() if same_host else 'other-host'
+    removed = not same_host
+    os.symlink(f'{lock_host}-4321', tmp_path / 'SingletonLock')
+    os.symlink('/tmp/missing-cookie', tmp_path / 'SingletonCookie')
+
+    app_module.APPThread(MagicMock())._remove_stale_profile_lock(str(tmp_path))
+
+    assert os.path.lexists(tmp_path / 'SingletonLock') is not removed
+    assert os.path.lexists(tmp_path / 'SingletonCookie') is not removed
