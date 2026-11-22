@@ -9,6 +9,8 @@ from ..shared.shared_state import shared_state
 from ..shared.backlight_helper import BacklightController
 
 class RTIThread(threading.Thread):
+    REOPEN_DELAY = 2
+
     def __init__(self, logger):
         super().__init__()
         self.rti_serial = None
@@ -17,7 +19,11 @@ class RTIThread(threading.Thread):
 
         self.logger = logger
         self._backlight = BacklightController()
+        self._serial_error = False
 
+        self._open_serial()
+
+    def _open_serial(self):
         try:
             if(shared_state.rpiModel == 5):
                 self.rti_serial = serial.Serial('/dev/ttyAMA2', baudrate = 2400, timeout = 1, write_timeout = 1)
@@ -26,7 +32,10 @@ class RTIThread(threading.Thread):
             elif (shared_state.rpiModel == 3):
                 self.rti_serial = serial.Serial('/dev/ttyS0', baudrate = 2400, timeout = 1, write_timeout = 1)
         except serial.SerialException as e:
-            self.logger.error(f'[RTI] Error initializing Serial port: {e}')
+            # Log once per failure streak, the port is retried every REOPEN_DELAY seconds
+            if not self._serial_error:
+                self.logger.error(f'[RTI] Error initializing Serial port: {e}')
+                self._serial_error = True
             self.rti_serial = None
 
     def run(self):
@@ -48,7 +57,9 @@ class RTIThread(threading.Thread):
         try:
             while not self._stop_event.is_set():
                 if not self.rti_serial or not self.rti_serial.is_open:
-                    time.sleep(0.2)
+                    self._stop_event.wait(self.REOPEN_DELAY)
+                    if not self._stop_event.is_set():
+                        self._open_serial()
                     continue
                 try:
                     if shared_state.rtiStatus:
@@ -60,9 +71,15 @@ class RTIThread(threading.Thread):
                     if byte is not None:
                         self.write(byte)
                     self.write(0x83)
+
+                    if self._serial_error:
+                        self.logger.info('[RTI] Serial port working again.')
+                        self._serial_error = False
                 except Exception as e:
-                    self.logger.error(f'[RTI] Error during operation: {e}')
-                    break
+                    if not self._serial_error:
+                        self.logger.error(f'[RTI] Error during operation: {e}, reopening port.')
+                        self._serial_error = True
+                    self.cleanup()
         finally:
             self.cleanup()
 

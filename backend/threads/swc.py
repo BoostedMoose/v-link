@@ -372,12 +372,14 @@ class CAN(SWCInterface):
 #############################################################
 
 class LIN(SWCInterface):
+    REOPEN_DELAY = 2
     
     def __init__(self, config, button_handler, logger):
         super().__init__(config, button_handler, logger)
         self.lin_serial = None
         self.lin_frame = LinFrame()
         self.processing_thread = None
+        self._serial_error = False
         
     # Parse LIN control mappings
     def _parse_mappings(self):
@@ -401,9 +403,7 @@ class LIN(SWCInterface):
     def start(self):
         try:
             if not shared_state.vLin:
-                port = '/dev/ttyAMA0' if shared_state.rpiModel == 5 else '/dev/ttyS0'
-                self.lin_serial = serial.Serial(port=port, baudrate=9600, timeout=1)
-                logger.info(f'[SWC] LIN SWC initialized on {port}')
+                self._open_serial()
             else:
                 logger.info('[SWC] Emulated LIN mode enabled')
             
@@ -414,6 +414,11 @@ class LIN(SWCInterface):
             logger.error(f'[SWC] LIN SWC init failed: {e}')
             raise
     
+    def _open_serial(self):
+        port = '/dev/ttyAMA0' if shared_state.rpiModel == 5 else '/dev/ttyS0'
+        self.lin_serial = serial.Serial(port=port, baudrate=9600, timeout=1)
+        logger.info(f'[SWC] LIN SWC initialized on {port}')
+
     # Stop LIN interface
     def stop(self):
         self._stop_event.set()
@@ -435,11 +440,27 @@ class LIN(SWCInterface):
     # Read from serial port
     def _read_from_serial(self):
         while not self._stop_event.is_set():
-            if self.lin_serial and self.lin_serial.is_open and self.lin_serial.in_waiting > 0:
-                self._process_byte(self.lin_serial.read(1))
-                self.button_handler.timeout_button()
-            else:
-                time.sleep(0.1)
+            try:
+                if not self.lin_serial.is_open:
+                    self._stop_event.wait(self.REOPEN_DELAY)
+                    if self._stop_event.is_set():
+                        break
+                    self._open_serial()
+
+                if self.lin_serial.in_waiting > 0:
+                    self._process_byte(self.lin_serial.read(1))
+                    self.button_handler.timeout_button()
+                else:
+                    time.sleep(0.1)
+                self._serial_error = False
+            except (serial.SerialException, OSError) as e:
+                if self._stop_event.is_set():
+                    break
+                # Log once per failure streak, the port is retried every REOPEN_DELAY seconds
+                if not self._serial_error:
+                    logger.error(f'[SWC] LIN serial error: {e}, reopening port.')
+                    self._serial_error = True
+                self.lin_serial.close()
     
     # Read from test file
     def _read_from_file(self):

@@ -43,3 +43,24 @@ def test_stop_waits_for_writer_before_closing_port():
     assert not stopper.is_alive()
     assert observations == [0]
     rti.rti_serial.close.assert_called_once()
+
+
+def test_write_error_reopens_port_and_keeps_running(monkeypatch):
+    from backend.threads import rti as rti_module
+
+    monkeypatch.setattr(rti_module.shared_state, "rpiModel", 5)
+    monkeypatch.setattr(RTIThread, "REOPEN_DELAY", 0)
+    broken, working = MagicMock(is_open=True), MagicMock(is_open=True)
+    broken.write.side_effect = rti_module.serial.SerialException("I/O error")
+    broken.close.side_effect = lambda: setattr(broken, "is_open", False)
+    opener = MagicMock(side_effect=[broken, working])
+    monkeypatch.setattr(rti_module.serial, "Serial", opener)
+
+    rti = RTIThread(MagicMock())
+    rti._backlight = MagicMock(update=MagicMock(return_value=(None, False, None)))
+    working.write.side_effect = lambda data: rti._stop_event.set()
+    rti.run_rti()
+
+    assert opener.call_count == 2
+    rti.logger.error.assert_called_once()
+    working.write.assert_called()
