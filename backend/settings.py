@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import logging
 from copy import deepcopy
@@ -173,13 +174,18 @@ def save_settings(setting, data):
     # Specify the file path
     logger.info(f'[Settings] Saving settings to "{setting}.json"...')
     json_path = USER_CONFIG_DIR / f'{setting}.json'
+    tmp_path = USER_CONFIG_DIR / f'{setting}.json.tmp'
 
-    # Save the settings to the JSON file
+    # Write to a temp file and swap it in, so power loss never leaves a truncated file
     try:
-        with open(json_path, 'w') as file:
+        with open(tmp_path, 'w', encoding='utf-8') as file:
             json.dump(data, file, indent=4)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(tmp_path, json_path)
     except Exception as e:
         logger.error(f'[Settings] Error saving settings to "{json_path}": {e}')
+        tmp_path.unlink(missing_ok=True)
 
 
 def reset_settings():

@@ -70,6 +70,14 @@ def test_save_settings_writes_valid_json(temp_config_dir):
     assert parsed == {'a': 1, 'b': [1, 2, 3]}
 
 
+def test_save_settings_keeps_previous_file_when_write_fails(temp_config_dir):
+    from backend import settings
+    settings.save_settings('app', {'a': 1})
+    settings.save_settings('app', {'a': object()})
+    assert json.loads((temp_config_dir / 'app.json').read_text()) == {'a': 1}
+    assert not (temp_config_dir / 'app.json.tmp').exists()
+
+
 # copy_files
 def test_copy_files_p1_t5_copies_profile_configs(temp_config_dir):
     """copy_files with P1/T5 must copy base app.json + profile can.json."""
