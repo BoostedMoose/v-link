@@ -370,3 +370,24 @@ def test_load_modules_enables_pimost_from_dongle_config(temp_config_dir, monkeyp
     settings.load_modules()
 
     assert fresh_state.pimost is True
+
+
+@pytest.mark.parametrize('adc_json, valid', [('{"sensors": {}}', True), ('{"sensors": {}', False)])
+def test_check_settings_exits_on_invalid_module_config(tmp_path, monkeypatch, adc_json, valid):
+    import threading
+    from backend import settings
+
+    user_dir = tmp_path / 'user'
+    user_dir.mkdir()
+    modules = {'can': False, 'rti': False, 'swc': False, 'adc': True}
+    (user_dir / 'app.json').write_text(json.dumps({'constants': {'modules': modules}}))
+    (user_dir / 'adc.json').write_text(adc_json)
+    monkeypatch.setattr(settings, 'DEFAULT_CONFIG_DIR', tmp_path / 'default')
+    monkeypatch.setattr(settings, 'USER_CONFIG_DIR', user_dir)
+    monkeypatch.setattr(settings.shared_state, 'exit_event', threading.Event())
+    monkeypatch.setattr(settings.shared_state, 'adcModule', False)
+
+    result = settings.check_settings()
+
+    assert result == (True if valid else {})
+    assert settings.shared_state.exit_event.is_set() is not valid

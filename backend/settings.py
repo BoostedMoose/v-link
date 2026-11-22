@@ -137,6 +137,10 @@ def check_settings():
     # If user app config exists, return True
     if (USER_CONFIG_DIR / 'app.json').exists():
         migrate_settings()
+        # The frontend waits for every enabled module, a broken config would hang it
+        if not validate_settings():
+            shared_state.exit_event.set()
+            return {}
         load_modules()
         return True
     else:
@@ -151,7 +155,31 @@ def check_settings():
             return result
         except Exception as e:
             logger.error(f'Error reading directories: {e}')
-            return None
+            return {}
+
+
+def validate_settings():
+    """Check that app.json and the configs of all enabled modules are readable JSON."""
+    try:
+        with (USER_CONFIG_DIR / 'app.json').open('r', encoding='utf-8') as f:
+            modules = json.load(f).get('constants', {}).get('modules')
+        if not isinstance(modules, dict):
+            raise ValueError('"constants.modules" is missing')
+    except Exception as e:
+        logger.error(f'[Settings] app.json is invalid: {e}')
+        return False
+
+    valid = True
+    for module in ('can', 'swc', 'adc', 'rti'):
+        if not modules.get(module):
+            continue
+        try:
+            with (USER_CONFIG_DIR / f'{module}.json').open('r', encoding='utf-8') as f:
+                json.load(f)
+        except Exception as e:
+            logger.error(f'[Settings] {module}.json is invalid: {e}')
+            valid = False
+    return valid
 
 
 def load_settings(setting):
@@ -195,6 +223,7 @@ def reset_settings():
     if not app_json_path.exists():
         logger.error(f'[Settings] Undefined profile, please delete .config/v-link/ and restart the app.')
         shared_state.exit_event.set()
+        return
 
     with app_json_path.open('r', encoding='utf-8') as f:
         config = json.load(f)
@@ -203,6 +232,7 @@ def reset_settings():
     if not profile_data:
         logger.error(f'[Settings] Undefined profile, please delete .config/v-link/ and restart the app.')
         shared_state.exit_event.set()
+        return
 
     copy_files(profile_data)
 
