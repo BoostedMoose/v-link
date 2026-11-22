@@ -1,8 +1,8 @@
 import threading
 import time
-import json
-import os
+import bisect
 import socketio
+from .. import settings
 from ..shared.shared_state import shared_state
 
 import board
@@ -26,6 +26,7 @@ class ADCThread(threading.Thread):
         self.i2c = None
 
         self.channels = []
+        self.failed_sensors = set()
 
         self.sensor_data = None
         self.pressure_data = None
@@ -34,8 +35,7 @@ class ADCThread(threading.Thread):
     def run(self):
         self.init_adc()
 
-        if self.ads:
-            self.read_settings()
+        if self.ads and self.read_settings():
             self.start_adc()
 
     def stop_thread(self):
@@ -59,28 +59,42 @@ class ADCThread(threading.Thread):
 
 
     def read_settings(self):
-        self.sensor_data = self.read_sensor_data_from_json()
+        self.sensor_data = settings.load_settings('adc')
+        if not self.sensor_data:
+            return False
 
         for i, (sensor_name, sensor_details) in enumerate(self.sensor_data['sensors'].items()):
             channel = sensor_details['channel']
             analog_in_instance = AnalogIn(self.ads, getattr(ADS, channel))
             self.channels.append(analog_in_instance)
+        return True
 
 
     def read_sensor(self):    
         for i, (key, sensor) in enumerate(self.sensor_data['sensors'].items()):
-            voltage = self.channels[i].voltage
-            resistance = None
+            try:
+                voltage = self.channels[i].voltage
+                resistance = None
 
-            if sensor['ntc']:
-                resistance = PULL_UP * voltage / (5 - voltage)
+                if sensor['ntc']:
+                    resistance = PULL_UP * voltage / (5 - voltage)
 
-            characteristics = sensor['characteristic']
-            interpolated_value = self.interpolate_value(voltage, resistance, characteristics)
-            
-            converted_value = eval(sensor['scale'], {'value': interpolated_value})
+                characteristics = sensor['characteristic']
+                interpolated_value = self.interpolate_value(voltage, resistance, characteristics)
 
-            shared_state.update_car_data(key , float(converted_value))
+                converted_value = eval(sensor['scale'], {'value': interpolated_value})
+
+                shared_state.update_car_data(key , float(converted_value))
+            except Exception as e:
+                # Log once per failure streak, the loop runs at 10 Hz
+                if key not in self.failed_sensors:
+                    self.logger.error(f'[ADC] Error reading sensor "{key}": {e}')
+                    self.failed_sensors.add(key)
+                continue
+
+            if key in self.failed_sensors:
+                self.logger.info(f'[ADC] Sensor "{key}" readable again.')
+                self.failed_sensors.discard(key)
 
             #with shared_state.car_data_lock:
             #    snapshot = shared_state.car_data.copy() 
@@ -89,39 +103,17 @@ class ADCThread(threading.Thread):
             #self.emit_data_to_frontend(data)
 
     def interpolate_value(self, voltage, resistance, characteristics):
-        interpolated_value = None
-        
-        # Calculate Value based on NTC characteristics
+        # NTC sensors are looked up by resistance, all others by voltage
+        x = resistance if resistance is not None else voltage
+        points = sorted((float(key), value) for key, value in characteristics.items())
+        keys = [key for key, _ in points]
+
+        # Use the two enclosing points; outside the table, extend the outer segment
+        i = min(max(bisect.bisect_left(keys, x), 1), len(points) - 1)
+        (x1, y1), (x2, y2) = points[i - 1], points[i]
+        interpolated_value = y1 + (y2 - y1) * (x - x1) / (x2 - x1)
+
         if resistance is not None:
-            closest_resistances = sorted(characteristics.keys(), key=lambda x: abs(float(x) - resistance))[:2]
-            value1, value2 = characteristics[closest_resistances[0]], characteristics[closest_resistances[1]]
-            interpolated_value = value1 + (value2 - value1) * (resistance - float(closest_resistances[0])) / (float(closest_resistances[1]) - float(closest_resistances[0]))
             interpolated_value = round(interpolated_value / STEP) * STEP
 
-        # Calculate Value based on Voltage characteristics
-        else:
-            voltage_values = [float(key) for key in characteristics.keys()]
-            pressure_values = list(characteristics.values())
-
-            # Find the two closest pairs
-            value1 = min(range(len(voltage_values)), key=lambda i: abs(voltage_values[i] - voltage))
-            value2 = max(range(len(voltage_values)), key=lambda i: abs(voltage_values[i] - voltage))
-
-            # Linear interpolation
-            interpolated_value = pressure_values[value1] + (pressure_values[value2] - pressure_values[value1]) * (
-                voltage - voltage_values[value1]
-            ) / (voltage_values[value2] - voltage_values[value1])
-        
         return interpolated_value
-
-    def read_sensor_data_from_json(self, filename='adc.json', app_name='v-link'):
-        # Expand ~ to the user's home directory
-        config_home = os.path.expanduser('~/.config')
-        config_folder = os.path.join(config_home, app_name)
-        file_path = os.path.join(config_folder, filename)
-
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f'[ADC] Config file not found: {file_path}')
-
-        with open(file_path, 'r') as file:
-            return json.load(file)
